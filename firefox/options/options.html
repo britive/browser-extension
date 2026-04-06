@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="utf-8">
+  <title>Britive Extension - Settings</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+
+<body>
+  <div class="container">
+    <h1>Britive Extension Settings</h1>
+
+    <section class="settings-section">
+      <h2>Connection Settings</h2>
+
+      <div class="form-group">
+        <label for="tenant">Britive:</label>
+        <div class="tenant-row">
+          <div class="input-with-suffix">
+            <input type="text" id="tenant" placeholder="your-company">
+            <span class="suffix">.britive-app.com</span>
+          </div>
+          <button id="auth-action" class="btn btn-secondary">Login</button>
+        </div>
+        <p id="auth-status" class="help-text">Checking...</p>
+      </div>
+
+      <div id="connection-status" class="status-message"></div>
+    </section>
+
+
+    <section class="settings-section">
+      <h2>Notifications</h2>
+
+      <div class="form-group">
+        <label>
+          <input type="checkbox" id="banner-check" checked>
+          Check for tenant notifications
+        </label>
+        <p class="help-text">Poll for banner notifications and verify authentication status</p>
+      </div>
+
+      <div class="form-group">
+        <label for="banner-poll-interval">Banner poll interval (seconds):</label>
+        <input type="number" id="banner-poll-interval" min="60" max="600" value="60">
+        <p class="help-text">How often to check for tenant banner notifications (60–600s)</p>
+      </div>
+
+      <div class="form-group">
+        <label>
+          <input type="checkbox" id="auto-checkout-on-approval">
+          Auto-checkout after approval
+        </label>
+        <p class="help-text">When an access request is approved, automatically start checkout</p>
+      </div>
+    </section>
+
+    <section class="settings-section">
+      <h2>Appearance</h2>
+
+      <div class="form-group">
+        <label for="theme">Theme:</label>
+        <select id="theme">
+          <option value="dark">Dark</option>
+          <option value="light">Light</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label for="zoom-level">Zoom (%):</label>
+        <input type="number" id="zoom-level" min="50" max="200" step="10" value="100">
+        <p class="help-text">Zoom level for the popup UI (50-200%, default 100)</p>
+      </div>
+
+      <div class="form-group">
+        <label>
+          <input type="checkbox" id="text-buttons">
+          Use text buttons
+        </label>
+        <p class="help-text">Display action buttons as text labels instead of icons</p>
+      </div>
+    </section>
+
+    <section class="settings-section">
+      <h2>Password Manager</h2>
+
+      <div class="form-group">
+        <label>
+          <input type="checkbox" id="show-all-secret-types">
+          Show all secret types
+        </label>
+        <p class="help-text">When off, only web credential secrets are shown in My Secrets</p>
+      </div>
+
+    </section>
+
+    <section class="settings-section">
+      <h2>URL Interception</h2>
+
+      <div class="form-group">
+        <label>
+          <input type="checkbox" id="intercept-aws-sts" checked>
+          Intercept Britive-issued AWS STS URLs
+        </label>
+        <p class="help-text">Automatically detect AWS console signin URLs and offer to open them in a container</p>
+      </div>
+
+      <div class="form-group">
+        <label for="custom-patterns">Custom URL Patterns (one per line):</label>
+        <textarea id="custom-patterns" rows="5"
+          placeholder="https://signin.aws.amazon.com/*&#10;https://console.aws.amazon.com/*"></textarea>
+        <p class="help-text">Add custom URL patterns to intercept. Use * as wildcard.</p>
+      </div>
+    </section>
+
+    <div class="actions">
+      <button id="save-settings" class="btn btn-primary">Save Settings</button>
+      <button id="reset-settings" class="btn btn-danger">Reset to Defaults</button>
+    </div>
+
+    <div id="save-status" class="status-message"></div>
+
+    <div id="reset-confirm-dialog" class="confirm-overlay" hidden>
+      <div class="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="reset-confirm-title">
+        <h3 id="reset-confirm-title">Reset settings to defaults?</h3>
+        <p>This clears your customized extension settings and restores defaults.</p>
+        <div class="confirm-actions">
+          <button id="reset-confirm-cancel" class="btn btn-secondary" type="button">Cancel</button>
+          <button id="reset-confirm-confirm" class="btn btn-danger" type="button">Reset</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="options.js"></script>
+</body>
+
+</html>

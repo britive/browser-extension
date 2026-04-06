@@ -1,0 +1,348 @@
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  --bg-primary: #0B0B1A;
+  --bg-secondary: #12122A;
+  --bg-card: #1A1A35;
+  --bg-hover: #222248;
+  --border: rgba(255, 255, 255, 0.08);
+  --text-primary: #EDF6FB;
+  --text-secondary: rgba(237, 246, 251, 0.6);
+  --text-muted: rgba(237, 246, 251, 0.35);
+  --accent-purple: #CA1ECC;
+  --accent-blue: #3E5DE0;
+  --gradient: linear-gradient(135deg, #CA1ECC, #3E5DE0);
+  --radius: 8px;
+  --radius-sm: 5px;
+  --success-bg: rgba(40, 167, 69, 0.15);
+  --success-border: rgba(40, 167, 69, 0.3);
+  --success-text: #5fdd77;
+  --error-bg: rgba(220, 53, 69, 0.15);
+  --error-border: rgba(220, 53, 69, 0.3);
+  --error-text: #ff6b7a;
+  --info-bg: rgba(62, 93, 224, 0.15);
+  --info-border: rgba(62, 93, 224, 0.3);
+  --info-text: #7b9bff;
+  --auth-text: #5fdd77;
+  --danger-bg: rgba(220, 53, 69, 0.2);
+  --danger-text: #ff6b7a;
+  --danger-border: rgba(220, 53, 69, 0.3);
+  --danger-hover-bg: rgba(220, 53, 69, 0.3);
+}
+
+:root.light {
+  --bg-primary: #F5F6FA;
+  --bg-secondary: #FFFFFF;
+  --bg-card: #F0F1F5;
+  --bg-hover: #E8E9F0;
+  --border: rgba(0, 0, 0, 0.1);
+  --text-primary: #040520;
+  --text-secondary: rgba(4, 5, 32, 0.65);
+  --text-muted: rgba(4, 5, 32, 0.4);
+  --success-bg: rgba(40, 167, 69, 0.1);
+  --success-border: rgba(40, 167, 69, 0.25);
+  --success-text: #1e7e34;
+  --error-bg: rgba(220, 53, 69, 0.1);
+  --error-border: rgba(220, 53, 69, 0.25);
+  --error-text: #c62828;
+  --info-bg: rgba(62, 93, 224, 0.1);
+  --info-border: rgba(62, 93, 224, 0.25);
+  --info-text: #2c4cc9;
+  --auth-text: #1e7e34;
+  --danger-bg: rgba(220, 53, 69, 0.1);
+  --danger-text: #c62828;
+  --danger-border: rgba(220, 53, 69, 0.25);
+  --danger-hover-bg: rgba(220, 53, 69, 0.2);
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  padding: 24px;
+}
+
+.container {
+  max-width: 640px;
+  margin: 0 auto;
+  background: var(--bg-secondary);
+  padding: 32px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+}
+
+h1 {
+  font-size: 22px;
+  font-weight: 600;
+  margin-bottom: 28px;
+  color: var(--text-primary);
+  letter-spacing: 0;
+}
+
+h2 {
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 16px;
+  color: var(--text-primary);
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 13px;
+}
+
+h3 {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.settings-section {
+  margin-bottom: 28px;
+  padding-bottom: 28px;
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-section:last-of-type {
+  border-bottom: none;
+}
+
+/* ── Forms ── */
+.form-group {
+  margin-bottom: 18px;
+}
+
+label {
+  display: block;
+  margin-bottom: 6px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+input[type="text"],
+input[type="password"],
+input[type="number"],
+textarea {
+  width: 100%;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-family: inherit;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  transition: border-color 0.2s;
+}
+
+input[type="text"]::placeholder,
+input[type="password"]::placeholder,
+textarea::placeholder {
+  color: var(--text-muted);
+}
+
+input[type="text"]:focus,
+input[type="password"]:focus,
+input[type="number"]:focus,
+textarea:focus {
+  outline: none;
+  border-color: var(--accent-blue);
+}
+
+input[type="checkbox"] {
+  margin-right: 8px;
+  accent-color: var(--accent-blue);
+}
+
+input[type="number"] {
+  width: 100px;
+}
+
+select {
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-family: inherit;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  transition: border-color 0.2s;
+  cursor: pointer;
+}
+
+select:focus {
+  outline: none;
+  border-color: var(--accent-blue);
+}
+
+textarea {
+  resize: vertical;
+  min-height: 100px;
+}
+
+.tenant-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.tenant-row .input-with-suffix {
+  flex: 1;
+}
+
+.tenant-row .btn {
+  flex-shrink: 0;
+  margin-bottom: 0;
+}
+
+.input-with-suffix {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.input-with-suffix input {
+  width: auto;
+  flex: 0 0 200px;
+}
+
+#tenant {
+  text-align: center;
+}
+
+.suffix {
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.help-text {
+  margin-top: 5px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* ── Buttons ── */
+.btn {
+  padding: 9px 18px;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-primary {
+  background: var(--accent-blue);
+  color: white;
+}
+
+.btn-primary:hover {
+  opacity: 0.85;
+}
+
+.btn-secondary {
+  background: var(--bg-card);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  margin-bottom: 8px;
+}
+
+.btn-secondary:hover {
+  background: var(--bg-hover);
+}
+
+.btn-danger {
+  background: var(--danger-bg);
+  color: var(--danger-text);
+  border: 1px solid var(--danger-border);
+  margin-left: 12px;
+}
+
+.btn-danger:hover {
+  background: var(--danger-hover-bg);
+}
+
+/* ── Auth status (shown as help-text under tenant row) ── */
+#auth-status.authenticated {
+  color: var(--auth-text);
+}
+
+/* ── Actions ── */
+.actions {
+  margin-top: 28px;
+  padding-top: 28px;
+  border-top: 1px solid var(--border);
+}
+
+/* ── Status messages ── */
+.status-message {
+  margin-top: 12px;
+  padding: 9px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  display: none;
+}
+
+.status-message.success {
+  display: block;
+  background: var(--success-bg);
+  border: 1px solid var(--success-border);
+  color: var(--success-text);
+}
+
+.status-message.error {
+  display: block;
+  background: var(--error-bg);
+  border: 1px solid var(--error-border);
+  color: var(--error-text);
+}
+
+.status-message.info {
+  display: block;
+  background: var(--info-bg);
+  border: 1px solid var(--info-border);
+  color: var(--info-text);
+}
+
+.confirm-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.confirm-dialog {
+  width: min(420px, calc(100% - 32px));
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+}
+
+.confirm-dialog h3 {
+  margin-bottom: 10px;
+}
+
+.confirm-dialog p {
+  margin-bottom: 16px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.confirm-actions .btn-danger {
+  margin-left: 0;
+}

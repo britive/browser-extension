@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="utf-8">
+  <title>Britive</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+
+<body>
+  <div id="app">
+    <div class="logo-bar">
+      <img src="../icons/britive-logo.webp" alt="Britive" class="logo-bar-img">
+      <span id="last-updated" class="header-updated"></span>
+    </div>
+
+    <div id="auth-view" class="view hidden">
+      <div style="padding: 24px 20px;">
+        <h2>Britive</h2>
+        <p class="info-text">Connect to your Britive tenant to access secrets.</p>
+
+        <form id="auth-form">
+          <div class="form-group">
+            <input type="text" id="tenant" placeholder="your-company" required>
+            <span class="hint">.britive-app.com</span>
+          </div>
+
+          <button type="submit" class="btn btn-primary">Log In</button>
+
+          <div class="auth-info">
+            <p>A browser window will open for you to authenticate.</p>
+          </div>
+
+          <div id="auth-pending" class="auth-pending hidden">
+            <span class="auth-pending-spinner"></span>
+            <span class="auth-pending-text">Authenticating...</span>
+          </div>
+
+          <div id="auth-error" class="error hidden"></div>
+          <div id="auth-success" class="success hidden"></div>
+        </form>
+      </div>
+    </div>
+
+    <div id="main-view" class="view hidden">
+      <div id="banner" class="banner hidden"></div>
+      <div class="header">
+        <div class="tabs">
+          <button class="tab active" data-tab="access">My Access</button>
+          <button class="tab" data-tab="approvals">My Approvals<span id="approvals-badge"
+              class="tab-badge hidden"></span></button>
+          <button class="tab" data-tab="secrets">My Secrets</button>
+        </div>
+        <div class="header-actions">
+          <button id="refresh" class="btn-icon" title="Refresh"><span class="refresh-icon">&#x21bb;</span></button>
+          <button id="open-sidebar" class="avatar-btn" title="Settings &amp; Account"></button>
+        </div>
+      </div>
+
+      <div id="tab-access" class="tab-content">
+        <div class="search-box">
+          <input type="text" id="search-access" placeholder="Search access...">
+        </div>
+        <div id="access-list" class="access-list">
+          <div class="loading">Loading access...</div>
+        </div>
+      </div>
+
+      <div id="tab-approvals" class="tab-content hidden">
+        <div id="approvals-list" class="approvals-list">
+          <div class="loading">Loading approvals...</div>
+        </div>
+      </div>
+
+      <div id="tab-secrets" class="tab-content hidden">
+        <div class="search-box">
+          <input type="text" id="search-secrets" placeholder="Search secrets...">
+        </div>
+        <div id="secrets-list" class="secrets-list">
+          <div class="loading">Loading secrets...</div>
+        </div>
+      </div>
+    </div>
+
+    <div id="sidebar-overlay" class="sidebar-overlay hidden"></div>
+    <div id="sidebar" class="sidebar">
+      <div class="sidebar-header">
+        <h2>Settings</h2>
+        <button id="close-sidebar" class="btn-icon" title="Close">&#x2715;</button>
+      </div>
+      <div id="sidebar-user" class="sidebar-user hidden">
+        <div class="sidebar-user-avatar" id="sidebar-avatar"></div>
+        <div class="sidebar-user-info">
+          <div class="sidebar-user-name" id="sidebar-user-name"></div>
+          <div class="sidebar-user-email" id="sidebar-user-email"></div>
+        </div>
+      </div>
+      <div class="sidebar-body">
+
+        <section class="sidebar-section">
+          <h3>Connection</h3>
+          <p id="sb-tenant-display" class="sidebar-help"></p>
+          <button id="sb-logout" class="btn btn-logout hidden">Log Out</button>
+          <div id="sb-connection-status" class="sidebar-status"></div>
+        </section>
+
+
+        <section class="sidebar-section">
+          <h3>Notifications</h3>
+          <label class="sidebar-check">
+            <input type="checkbox" id="sb-banner-check" checked>
+            Check for tenant notifications
+          </label>
+          <div class="sidebar-field">
+            <label for="sb-banner-poll">Banner poll interval (s)</label>
+            <input type="number" id="sb-banner-poll" min="60" max="600" value="60">
+          </div>
+        </section>
+
+        <section class="sidebar-section">
+          <h3>Tabs</h3>
+          <label class="sidebar-check">
+            <input type="checkbox" id="sb-tab-access" checked>
+            My Access
+          </label>
+          <label class="sidebar-check">
+            <input type="checkbox" id="sb-tab-approvals" checked>
+            My Approvals
+          </label>
+          <label class="sidebar-check">
+            <input type="checkbox" id="sb-tab-secrets" checked>
+            My Secrets
+          </label>
+          <p class="sidebar-help">Choose which tabs to show. At least one must be enabled.</p>
+        </section>
+
+        <section class="sidebar-section">
+          <h3>Appearance</h3>
+          <div class="sidebar-field">
+            <label for="sb-theme">Theme</label>
+            <select id="sb-theme">
+              <option value="dark">Dark</option>
+              <option value="light">Light</option>
+            </select>
+          </div>
+          <div class="sidebar-field">
+            <label for="sb-zoom-level">Zoom (%)</label>
+            <input type="number" id="sb-zoom-level" min="50" max="200" step="10" value="100">
+          </div>
+          <label class="sidebar-check">
+            <input type="checkbox" id="sb-text-buttons">
+            Text buttons
+          </label>
+          <p class="sidebar-help">Show action buttons as text labels instead of icons</p>
+        </section>
+
+        <section class="sidebar-section">
+          <h3>Access</h3>
+          <div class="sidebar-field">
+            <label for="sb-collection-name">Additional Collection</label>
+            <select id="sb-collection-name">
+              <option value="">Favorites only</option>
+            </select>
+            <p class="sidebar-help">Favorites are always included; selected collection is merged on top.</p>
+          </div>
+          <label class="sidebar-check">
+            <input type="checkbox" id="sb-checkout-expiry-notification" checked>
+            Notify before checkout expires
+          </label>
+          <label class="sidebar-check">
+            <input type="checkbox" id="sb-auto-checkout-approval">
+            Auto-checkout on approval
+          </label>
+        </section>
+
+        <section class="sidebar-section">
+          <h3>Password Manager</h3>
+          <label class="sidebar-check">
+            <input type="checkbox" id="sb-show-all-types">
+            Show all secret types
+          </label>
+          <p class="sidebar-help">When off, only web credential secrets are shown</p>
+        </section>
+
+
+        <div class="sidebar-actions">
+          <div class="save-btn-wrap">
+            <button id="sb-save" class="btn btn-primary">Save Settings</button>
+            <span id="sb-save-tooltip" class="save-tooltip"></span>
+          </div>
+          <button id="sb-reset" class="btn btn-link">Reset Defaults</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="footer-dock">
+      <div class="footer">
+        <div id="crt-debug" class="crt-debug hidden">
+          <pre id="crt-debug-log"></pre>
+        </div>
+        <div class="footer-bar">
+          <a href="https://github.com/britive/browser-extension" id="footer-link" class="footer-link"
+            title="View on GitHub">
+            <span class="footer-version" id="footer-version"></span>
+          </a>
+          <span id="crt-debug-toggle" class="crt-debug-toggle hidden" title="Toggle debug console">[&gt;_]</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="checkout-modal" class="modal-overlay hidden" role="dialog" aria-modal="true"
+    aria-labelledby="checkout-modal-title">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <span class="modal-title" id="checkout-modal-title">Check Out</span>
+        <button id="checkout-modal-close" class="modal-close" title="Cancel" aria-label="Cancel">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p id="checkout-modal-profile" class="modal-profile-name"></p>
+        <div id="checkout-field-justification" class="modal-field hidden">
+          <label for="checkout-justification">Justification <span class="required">*</span></label>
+          <textarea id="checkout-justification" rows="2" maxlength="255" placeholder="Reason for access..."></textarea>
+          <span class="modal-hint">Max 255 characters</span>
+        </div>
+        <div id="checkout-field-ticketType" class="modal-field hidden">
+          <label for="checkout-ticket-type">Ticket Type <span class="required">*</span></label>
+          <select id="checkout-ticket-type">
+            <option value="">Select ticket type...</option>
+          </select>
+        </div>
+        <div id="checkout-field-ticketId" class="modal-field hidden">
+          <label for="checkout-ticket-id">Ticket ID <span class="required">*</span></label>
+          <div class="ticket-search-wrapper">
+            <input type="text" id="checkout-ticket-id" placeholder="Search or enter ticket ID..." autocomplete="off">
+            <div id="ticket-search-results" class="ticket-search-results hidden"></div>
+          </div>
+        </div>
+        <div id="checkout-field-otp" class="modal-field hidden">
+          <label for="checkout-otp">One-Time Passcode <span class="required">*</span></label>
+          <input type="text" id="checkout-otp" inputmode="numeric" autocomplete="one-time-code"
+            placeholder="6-digit code">
+        </div>
+        <div id="checkout-modal-error" class="modal-error hidden"></div>
+      </div>
+      <div class="modal-footer">
+        <button id="checkout-modal-cancel" class="btn btn-secondary">Cancel</button>
+        <button id="checkout-modal-submit" class="btn btn-primary">Check Out</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast-container" class="toast-container"></div>
+
+  <div id="action-tooltip" class="action-tooltip hidden" role="tooltip"></div>
+
+  <div id="activity-modal" class="modal-overlay hidden" role="dialog" aria-modal="true"
+    aria-labelledby="activity-modal-title">
+    <div class="modal-dialog activity-dialog">
+      <div class="modal-header">
+        <span class="modal-title" id="activity-modal-title">WAITING FOR APPROVAL...</span>
+        <span class="activity-score hidden" id="activity-score">Score: 0</span>
+        <button id="activity-modal-close" class="modal-close" title="Close" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-body activity-body">
+        <div id="activity-picker" class="activity-picker">
+          <button class="activity-pick-btn" data-activity="alpha">S...</button>
+          <button class="activity-pick-btn" data-activity="beta">T...</button>
+        </div>
+        <div class="activity-canvas-area">
+          <canvas id="activity-canvas" class="hidden" width="280" height="200"></canvas>
+          <div class="activity-preview-wrap">
+            <span class="activity-preview-label hidden" id="activity-preview-label">NEXT</span>
+            <canvas id="activity-preview" class="hidden" width="56" height="56"></canvas>
+          </div>
+        </div>
+        <div class="activity-hint" id="activity-hint"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+
+</html>

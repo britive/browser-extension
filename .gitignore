@@ -1,0 +1,35 @@
+# Build artifacts
+*.crx
+*.xpi
+*.zip
+dist/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.settings/
+.classpath
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# Temporary files
+*.log
+*.tmp
+*.temp
+.cache/
+.tmp/
+
+# Environment
+.env

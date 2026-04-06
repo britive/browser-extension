@@ -1,0 +1,66 @@
+{
+  "manifest_version": 3,
+  "name": "Britive",
+  "version": "1.0.0",
+  "version_name": "1.0.0",
+  "description": "Britive extension for My Access, My Approvals, and My Secrets.",
+  "icons": {
+    "48": "icons/britive-icon-48.png",
+    "96": "icons/britive-icon-96.png",
+    "128": "icons/britive-icon-128.png"
+  },
+  "permissions": [
+    "identity",
+    "storage",
+    "tabs",
+    "notifications",
+    "alarms",
+    "declarativeNetRequest",
+    "offscreen",
+    "cookies"
+  ],
+  "host_permissions": [
+    "https://*.britive-app.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_icon": {
+      "48": "icons/britive-icon-48.png",
+      "96": "icons/britive-icon-96.png",
+      "128": "icons/britive-icon-128.png"
+    },
+    "default_title": "Britive",
+    "default_popup": "popup/popup.html"
+  },
+  "options_ui": {
+    "page": "options/options.html"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
+  },
+  "commands": {
+    "open-access-search": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+K",
+        "mac": "Command+Shift+K"
+      },
+      "description": "Open Britive extension and focus access search"
+    },
+    "open-approvals-tab": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+Comma",
+        "mac": "Command+Shift+Comma"
+      },
+      "description": "Open Britive extension and switch to approvals"
+    },
+    "open-secrets-search": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+Period",
+        "mac": "Command+Shift+Period"
+      },
+      "description": "Open Britive extension and focus secrets search"
+    }
+  }
+}

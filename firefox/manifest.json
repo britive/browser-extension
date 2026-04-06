@@ -1,0 +1,83 @@
+{
+  "manifest_version": 2,
+  "name": "Britive",
+  "version": "1.0.0",
+  "description": "Britive extension for My Access, My Approvals, and My Secrets.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "developer@britive.com",
+      "strict_min_version": "142.0",
+      "data_collection_permissions": {
+        "required": [
+          "none"
+        ],
+        "optional": []
+      }
+    }
+  },
+  "icons": {
+    "48": "icons/britive-icon-48.png",
+    "96": "icons/britive-icon-96.png",
+    "128": "icons/britive-icon-128.png"
+  },
+  "permissions": [
+    "identity",
+    "storage",
+    "tabs",
+    "notifications",
+    "webRequest",
+    "webRequestBlocking",
+    "cookies",
+    "contextualIdentities",
+    "https://*.britive-app.com/*",
+    "https://signin.aws.amazon.com/*",
+    "https://*.awsapps.com/*"
+  ],
+  "optional_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "scripts": [
+      "background.js"
+    ]
+  },
+  "browser_action": {
+    "default_icon": {
+      "48": "icons/britive-icon-48.png",
+      "96": "icons/britive-icon-96.png",
+      "128": "icons/britive-icon-128.png"
+    },
+    "default_title": "Britive",
+    "default_popup": "popup/popup.html"
+  },
+  "options_ui": {
+    "page": "options/options.html"
+  },
+  "web_accessible_resources": [
+    "picker/picker.html"
+  ],
+  "content_security_policy": "script-src 'self'; object-src 'self'",
+  "commands": {
+    "open-access-search": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+K",
+        "mac": "Command+Shift+K"
+      },
+      "description": "Open Britive extension and focus access search"
+    },
+    "open-approvals-tab": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+Comma",
+        "mac": "Command+Shift+Comma"
+      },
+      "description": "Open Britive extension and switch to approvals"
+    },
+    "open-secrets-search": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+Period",
+        "mac": "Command+Shift+Period"
+      },
+      "description": "Open Britive extension and focus secrets search"
+    }
+  }
+}
