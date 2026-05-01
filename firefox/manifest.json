@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "Britive",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Britive extension for My Access, My Approvals, and My Secrets.",
   "browser_specific_settings": {
     "gecko": {
@@ -25,6 +25,7 @@
     "storage",
     "tabs",
     "notifications",
+    "clipboardWrite",
     "webRequest",
     "webRequestBlocking",
     "cookies",
@@ -53,6 +54,17 @@
   "options_ui": {
     "page": "options/options.html"
   },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://*.britive-app.com/cli*"
+      ],
+      "js": [
+        "cli-ready.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
   "web_accessible_resources": [
     "picker/picker.html"
   ],

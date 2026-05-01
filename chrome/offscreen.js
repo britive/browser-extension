@@ -4,11 +4,11 @@
 // cookie set by the service worker via chrome.cookies.set() before connecting.
 // The WS upgrade request carries this cookie to authenticate with the backend.
 
-'use strict';
+"use strict";
 
 let currentTenant = null;
 let currentBearerToken = null;
-let currentExtensionVersion = 'unknown';
+let currentExtensionVersion = "unknown";
 let ws = null;
 let pingIntervalMs = 25000;
 let pingTimeoutMs = 5000;
@@ -19,14 +19,14 @@ let connecting = false;
 let intentionalDisconnect = false;
 
 chrome.runtime.onMessage.addListener((message) => {
-  if (message.action === 'connectWs') {
+  if (message.action === "connectWs") {
     currentTenant = message.tenant;
     currentBearerToken = message.bearerToken || null;
-    currentExtensionVersion = message.extensionVersion || 'unknown';
+    currentExtensionVersion = message.extensionVersion || "unknown";
     intentionalDisconnect = false;
     connectSocket(message.tenant);
   }
-  if (message.action === 'disconnectWs') {
+  if (message.action === "disconnectWs") {
     disconnectSocket();
   }
 });
@@ -54,11 +54,11 @@ function connectSocket(tenant) {
 
   ws.onmessage = (event) => {
     const raw = event.data;
-    if (typeof raw !== 'string' || raw.length === 0) return;
+    if (typeof raw !== "string" || raw.length === 0) return;
 
     const code = raw.charAt(0);
 
-    if (code === '0') {
+    if (code === "0") {
       // Engine.IO handshake: extract pingInterval and pingTimeout
       try {
         const handshake = JSON.parse(raw.substring(1));
@@ -71,12 +71,16 @@ function connectSocket(tenant) {
         // Start client-side ping interval
         pingTimer = setInterval(() => {
           if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send('2');
+            ws.send("2");
             // Arm pong timeout
             clearPingTimeout();
             pingTimeoutTimer = setTimeout(() => {
               if (ws) {
-                try { ws.close(); } catch (err) { /* ignore */ }
+                try {
+                  ws.close();
+                } catch (err) {
+                  /* ignore */
+                }
               }
             }, pingTimeoutMs);
           }
@@ -84,60 +88,74 @@ function connectSocket(tenant) {
 
         // Send Socket.IO namespace connect
         if (ws && ws.readyState === WebSocket.OPEN) {
-          ws.send('40');
+          ws.send("40");
         }
       } catch (e) {}
       return;
     }
 
-    if (code === '1') {
+    if (code === "1") {
       // Engine.IO close request from server
       if (ws) {
-        try { ws.close(); } catch (e) { /* ignore */ }
+        try {
+          ws.close();
+        } catch (e) {
+          /* ignore */
+        }
       }
       return;
     }
 
-    if (raw === '3') {
+    if (raw === "3") {
       // Pong from server - clear ping timeout
       clearPingTimeout();
       return;
     }
 
-    if (raw === '40') {
+    if (raw === "40") {
       // Socket.IO namespace connect ack
       if (!connected) {
         connected = true;
-        chrome.runtime.sendMessage({ action: 'wsConnected' }).catch(() => {});
+        chrome.runtime.sendMessage({ action: "wsConnected" }).catch(() => {});
       }
       return;
     }
 
-    if (raw === '41') {
+    if (raw === "41") {
       // Socket.IO namespace disconnect from server
       if (ws) {
-        try { ws.close(); } catch (e) { /* ignore */ }
+        try {
+          ws.close();
+        } catch (e) {
+          /* ignore */
+        }
       }
       return;
     }
 
-    if (raw.startsWith('44')) {
+    if (raw.startsWith("44")) {
       // Socket.IO namespace error (e.g. auth failure)
       if (ws) {
-        try { ws.close(); } catch (e) { /* ignore */ }
+        try {
+          ws.close();
+        } catch (e) {
+          /* ignore */
+        }
       }
       return;
     }
 
-    if (raw.startsWith('42')) {
+    if (raw.startsWith("42")) {
       try {
         const payload = JSON.parse(raw.substring(2));
         if (Array.isArray(payload) && payload.length >= 2) {
-          chrome.runtime.sendMessage({
-            action: 'wsEventFromOffscreen',
-            eventName: payload[0],
-            payload: payload[1]
-          }).catch(() => {});
+          chrome.runtime
+            .sendMessage({
+              action: "wsEventFromOffscreen",
+              eventName: payload[0],
+              payload: payload[1],
+            })
+            .catch(() => {});
         }
       } catch (e) {}
       return;
@@ -162,14 +180,18 @@ function disconnectSocket() {
   currentBearerToken = null;
   cleanupTimers();
   if (ws) {
-    try { ws.close(); } catch (e) { /* ignore */ }
+    try {
+      ws.close();
+    } catch (e) {
+      /* ignore */
+    }
     ws = null;
   }
   const wasConnected = connected;
   connected = false;
   connecting = false;
   if (wasConnected) {
-    chrome.runtime.sendMessage({ action: 'wsDisconnected' }).catch(() => {});
+    chrome.runtime.sendMessage({ action: "wsDisconnected" }).catch(() => {});
   }
 }
 
@@ -182,7 +204,7 @@ function handleDisconnect() {
   // Always notify the service worker so it can schedule a full reconnect
   // (which includes re-setting the auth cookie before connecting).
   if (!intentionalDisconnect) {
-    chrome.runtime.sendMessage({ action: 'wsDisconnected' }).catch(() => {});
+    chrome.runtime.sendMessage({ action: "wsDisconnected" }).catch(() => {});
   }
 }
 

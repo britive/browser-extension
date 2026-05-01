@@ -11,7 +11,7 @@ function generateRandomBytes(length) {
 
 function base64UrlEncode(bytes) {
   const base64 = btoa(String.fromCharCode(...bytes));
-  return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+  return base64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
 }
 
 // Generate a PKCE code_verifier (43-128 unreserved chars, RFC 7636)
@@ -22,15 +22,17 @@ function generateCodeVerifier() {
 // SHA-256 hash -> base64url (for PKCE code_challenge with S256 method)
 async function generateCodeChallenge(verifier) {
   const data = new TextEncoder().encode(verifier);
-  const hash = await crypto.subtle.digest('SHA-256', data);
+  const hash = await crypto.subtle.digest("SHA-256", data);
   return base64UrlEncode(new Uint8Array(hash));
 }
 
 // SHA-256 hash -> hex string (for client_id derivation)
 async function sha256Hex(text) {
   const data = new TextEncoder().encode(text);
-  const hash = await crypto.subtle.digest('SHA-256', data);
-  return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('');
+  const hash = await crypto.subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(hash))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
 }
 
 // Generate a random state parameter for CSRF protection
@@ -40,19 +42,23 @@ function generateState() {
 
 // Compute the OAuth client_id for a tenant
 // client_id = sha256hex("browser-extension-<tenantRoot>")
-// tenantRoot = first segment before any dots (e.g. "smdev" from "smdev.dev")
+// tenantRoot = first segment before any dots (e.g. "acme" from "acme.dev")
 async function computeClientId(tenant) {
-  const tenantRoot = tenant.split('.')[0];
-  return await sha256Hex('browser-extension-' + tenantRoot);
+  const tenantRoot = tenant.split(".")[0];
+  return await sha256Hex("browser-extension-" + tenantRoot);
 }
 
 // Tenant name validation - allows subdomains (dots) and hyphens
 function isValidTenant(t) {
-  return typeof t === 'string' && t.length > 0 && /^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/.test(t);
+  return (
+    typeof t === "string" &&
+    t.length > 0 &&
+    /^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/.test(t)
+  );
 }
 
 function getTenantBaseUrl(tenant) {
-  if (!isValidTenant(tenant)) throw new Error('Invalid tenant name');
+  if (!isValidTenant(tenant)) throw new Error("Invalid tenant name");
   return `https://${tenant}.britive-app.com`;
 }
 
@@ -74,33 +80,51 @@ function stableStringify(value) {
 
 function sortKeysDeep(value) {
   if (Array.isArray(value)) return value.map(sortKeysDeep);
-  if (value && typeof value === 'object') {
-    return Object.keys(value).sort().reduce((acc, key) => {
-      acc[key] = sortKeysDeep(value[key]);
-      return acc;
-    }, {});
+  if (value && typeof value === "object") {
+    return Object.keys(value)
+      .sort()
+      .reduce((acc, key) => {
+        acc[key] = sortKeysDeep(value[key]);
+        return acc;
+      }, {});
   }
   return value;
 }
 
-function normalizeError(error, fallback = 'Unexpected error') {
-  if (typeof error === 'string' && error.trim()) return error.trim();
-  if (error && typeof error.message === 'string' && error.message.trim()) return error.message.trim();
+function normalizeError(error, fallback = "Unexpected error") {
+  if (typeof error === "string" && error.trim()) return error.trim();
+  if (error && typeof error.message === "string" && error.message.trim())
+    return error.message.trim();
   return fallback;
 }
 
 const APPROVALS_FALLBACK_INTERVAL_SEC = 60;
+const POST_LOGIN_REFRESH_COOLDOWN_MS = 2 * 60 * 1000;
+const TOKEN_REFRESH_LEAD_TIME_MS = 5 * 60 * 1000;
+
+function hasAuthenticatedTenantSession(settings) {
+  return Boolean(
+    settings &&
+    settings.authenticated &&
+    settings.bearerToken &&
+    isValidTenant(settings.tenant),
+  );
+}
 
 async function reportError(scope, error, meta = null) {
   try {
-    const { recentInternalErrors = [] } = await chrome.storage.local.get('recentInternalErrors');
+    const { recentInternalErrors = [] } = await chrome.storage.local.get(
+      "recentInternalErrors",
+    );
     recentInternalErrors.push({
       scope,
       message: normalizeError(error),
       meta,
-      timestamp: Date.now()
+      timestamp: Date.now(),
     });
-    await chrome.storage.local.set({ recentInternalErrors: recentInternalErrors.slice(-25) });
+    await chrome.storage.local.set({
+      recentInternalErrors: recentInternalErrors.slice(-25),
+    });
   } catch (_) {}
 }
 
@@ -116,7 +140,7 @@ class BritiveAPI {
   }
 
   async initialize() {
-    const settings = await chrome.storage.local.get(['britiveSettings']);
+    const settings = await chrome.storage.local.get(["britiveSettings"]);
     if (settings.britiveSettings) {
       if (isValidTenant(settings.britiveSettings.tenant)) {
         this.baseUrl = getTenantBaseUrl(settings.britiveSettings.tenant);
@@ -137,11 +161,11 @@ class BritiveAPI {
     await this.ensureInitialized();
 
     if (!this.baseUrl) {
-      throw new Error('Britive tenant not configured');
+      throw new Error("Britive tenant not configured");
     }
 
     if (!this.bearerToken) {
-      throw new Error('Not authenticated. Please log in to Britive.');
+      throw new Error("Not authenticated. Please log in to Britive.");
     }
 
     const url = `${this.baseUrl}${endpoint}`;
@@ -150,11 +174,11 @@ class BritiveAPI {
     const response = await fetch(url, {
       ...options,
       headers: {
-        'Authorization': `Bearer ${this.bearerToken}`,
-        'Content-Type': 'application/json',
-        'X-Britive-Extension': extVersion,
-        ...options.headers
-      }
+        Authorization: `Bearer ${this.bearerToken}`,
+        "Content-Type": "application/json",
+        "X-Britive-Extension": extVersion,
+        ...options.headers,
+      },
     });
 
     if (!response.ok) {
@@ -168,12 +192,12 @@ class BritiveAPI {
       if (response.status === 403) {
         try {
           const errorJson = JSON.parse(errorText);
-          if (errorJson.errorCode === 'PE-0028') {
+          if (errorJson.errorCode === "PE-0028") {
             // Step-up auth required - user IS authenticated, don't clear token
             throw new Error(`API Error: ${response.status} - ${errorText}`);
           }
         } catch (e) {
-          if (e.message.startsWith('API Error:')) throw e;
+          if (e.message.startsWith("API Error:")) throw e;
         }
         // Permission denied - don't clear the session, just surface the error
         throw new Error(`API Error: ${response.status} - ${errorText}`);
@@ -181,14 +205,14 @@ class BritiveAPI {
 
       if (response.status === 401) {
         await this.clearToken();
-        throw new Error('Not authenticated. Please log in to Britive again.');
+        throw new Error("Not authenticated. Please log in to Britive again.");
       }
 
       throw new Error(`API Error: ${response.status} - ${errorText}`);
     }
 
-    const contentType = response.headers.get('content-type');
-    if (contentType && contentType.includes('application/json')) {
+    const contentType = response.headers.get("content-type");
+    if (contentType && contentType.includes("application/json")) {
       return response.json();
     }
 
@@ -197,50 +221,61 @@ class BritiveAPI {
 
   async clearToken() {
     // Don't clear if token was just set (< 15s ago) - prevents post-login 403 race
-    const settings = await chrome.storage.local.get(['britiveSettings']);
-    if (settings.britiveSettings?.loginTimestamp &&
-      (Date.now() - settings.britiveSettings.loginTimestamp) < 15000) {
+    const settings = await chrome.storage.local.get(["britiveSettings"]);
+    if (
+      settings.britiveSettings?.loginTimestamp &&
+      Date.now() - settings.britiveSettings.loginTimestamp < 15000
+    ) {
       return;
     }
     this.bearerToken = null;
     this.vaultId = null;
     // Cancel any pending token refresh alarm
-    chrome.alarms.clear('britive-token-refresh');
+    chrome.alarms.clear("britive-token-refresh");
     if (settings.britiveSettings) {
       settings.britiveSettings.bearerToken = null;
       settings.britiveSettings.refreshToken = null;
       settings.britiveSettings.clientId = null;
       settings.britiveSettings.authenticated = false;
       settings.britiveSettings.loginTimestamp = null;
-      await chrome.storage.local.set({ britiveSettings: settings.britiveSettings });
+      await chrome.storage.local.set({
+        britiveSettings: settings.britiveSettings,
+      });
     }
     await clearSecretsCache();
     await chrome.storage.local.remove([
-      'secretTemplates', 'secretUrlMap',
-      'cachedUserProfile', 'cachedMfaRegistrations', 'cachedCheckedOutProfiles',
-      'accessCache_data', 'accessCache_collectionId', 'accessCache_collectionName',
-      'accessCollapsedState', 'pendingApprovals', 'bannerDismissed',
-      'checkoutExpirations'
+      "secretTemplates",
+      "secretUrlMap",
+      "cachedUserProfile",
+      "cachedMfaRegistrations",
+      "cachedCheckedOutProfiles",
+      "accessCache_data",
+      "accessCache_collectionId",
+      "accessCache_collectionName",
+      "accessCollapsedState",
+      "pendingApprovals",
+      "bannerDismissed",
+      "checkoutExpirations",
     ]);
     chrome.storage.session.set({ wsNotificationQueue: [] }).catch(() => {});
     clearAllCheckoutExpirationNotifications();
     await disconnectNotificationSocket();
     // Clear extension badge
-    chrome.action.setBadgeText({ text: '' });
+    chrome.action.setBadgeText({ text: "" });
     // Notify popup if open so it can return to the login screen
-    chrome.runtime.sendMessage({ action: 'sessionExpired' }).catch(() => {});
+    chrome.runtime.sendMessage({ action: "sessionExpired" }).catch(() => {});
   }
 
   async getVaultId() {
     if (this.vaultId) return this.vaultId;
 
     try {
-      const vault = await this.makeRequest('/api/v1/secretmanager/vault');
+      const vault = await this.makeRequest("/api/v1/secretmanager/vault");
       this.vaultId = vault.id;
       return this.vaultId;
     } catch (error) {
-      await reportError('getVaultId', error);
-      throw new Error('No secrets vault found or access denied');
+      await reportError("getVaultId", error);
+      throw new Error("No secrets vault found or access denied");
     }
   }
 }
@@ -251,22 +286,26 @@ const britiveAPI = new BritiveAPI();
 const extVersion = chrome.runtime.getManifest().version;
 chrome.declarativeNetRequest.updateDynamicRules({
   removeRuleIds: [1],
-  addRules: [{
-    id: 1,
-    priority: 1,
-    action: {
-      type: 'modifyHeaders',
-      requestHeaders: [{
-        header: 'User-Agent',
-        operation: 'append',
-        value: ` browser-extension-${extVersion}`
-      }]
+  addRules: [
+    {
+      id: 1,
+      priority: 1,
+      action: {
+        type: "modifyHeaders",
+        requestHeaders: [
+          {
+            header: "User-Agent",
+            operation: "append",
+            value: ` browser-extension-${extVersion}`,
+          },
+        ],
+      },
+      condition: {
+        urlFilter: "*.britive-app.com/*",
+        resourceTypes: ["xmlhttprequest", "other"],
+      },
     },
-    condition: {
-      urlFilter: '*.britive-app.com/*',
-      resourceTypes: ['xmlhttprequest', 'other']
-    }
-  }]
+  ],
 });
 
 // ── Secrets cache ──
@@ -274,7 +313,7 @@ chrome.declarativeNetRequest.updateDynamicRules({
 const CACHE_MAX_AGE_MS = 60 * 60 * 1000; // 1 hour
 
 async function getCachedSecrets() {
-  const { secretsCache } = await chrome.storage.local.get('secretsCache');
+  const { secretsCache } = await chrome.storage.local.get("secretsCache");
   if (!secretsCache) return null;
   const age = Date.now() - (secretsCache.timestamp || 0);
   if (age > CACHE_MAX_AGE_MS) return null;
@@ -283,12 +322,12 @@ async function getCachedSecrets() {
 
 async function setCachedSecrets(secrets) {
   await chrome.storage.local.set({
-    secretsCache: { secrets, timestamp: Date.now() }
+    secretsCache: { secrets, timestamp: Date.now() },
   });
 }
 
 async function clearSecretsCache() {
-  await chrome.storage.local.remove('secretsCache');
+  await chrome.storage.local.remove("secretsCache");
 }
 
 // ── Secret templates ──
@@ -297,7 +336,9 @@ async function clearSecretsCache() {
 
 async function fetchSecretTemplates() {
   try {
-    const response = await britiveAPI.makeRequest('/api/v1/secretmanager/secret-templates/static');
+    const response = await britiveAPI.makeRequest(
+      "/api/v1/secretmanager/secret-templates/static",
+    );
     const templates = response.result || response || [];
 
     const webTypes = [];
@@ -305,16 +346,16 @@ async function fetchSecretTemplates() {
 
     for (const tpl of templates) {
       const params = tpl.parameters || [];
-      const paramNames = params.map(p => (p.name || '').toLowerCase());
-      const hasURL = paramNames.includes('url');
-      const hasPassword = paramNames.includes('password');
-      const hasOTP = paramNames.includes('otp');
+      const paramNames = params.map((p) => (p.name || "").toLowerCase());
+      const hasURL = paramNames.includes("url");
+      const hasPassword = paramNames.includes("password");
+      const hasOTP = paramNames.includes("otp");
 
       allTypes.push({
         secretType: tpl.secretType,
         description: tpl.description || tpl.secretType,
         hasOTP,
-        isWebType: hasURL && hasPassword
+        isWebType: hasURL && hasPassword,
       });
 
       if (hasURL && hasPassword) {
@@ -331,7 +372,7 @@ async function fetchSecretTemplates() {
 }
 
 async function getCachedSecretTemplates() {
-  const { secretTemplates } = await chrome.storage.local.get('secretTemplates');
+  const { secretTemplates } = await chrome.storage.local.get("secretTemplates");
   if (!secretTemplates || !secretTemplates.timestamp) return null;
   const age = Date.now() - secretTemplates.timestamp;
   if (age > CACHE_MAX_AGE_MS) return null;
@@ -349,17 +390,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 async function handleMessage(message, sender) {
   // WebSocket offscreen relay events
-  if (message.action === 'wsEventFromOffscreen') {
+  if (message.action === "wsEventFromOffscreen") {
     handleSocketEvent(message.eventName, message.payload);
     return;
   }
-  if (message.action === 'wsConnected') {
+  if (message.action === "wsConnected") {
     wsConnecting = false;
     wsReconnectDelay = 1000;
     stopApprovalsPolling(true);
     return;
   }
-  if (message.action === 'wsDisconnected') {
+  if (message.action === "wsDisconnected") {
     wsConnecting = false;
     if (britiveAPI.bearerToken) {
       startApprovalsPolling();
@@ -368,7 +409,7 @@ async function handleMessage(message, sender) {
     return;
   }
 
-  if (message.action === 'getSecrets') {
+  if (message.action === "getSecrets") {
     const forceRefresh = message.forceRefresh === true;
 
     if (!forceRefresh) {
@@ -385,189 +426,265 @@ async function handleMessage(message, sender) {
     return { secrets };
   }
 
-  if (message.action === 'refreshBanner') {
+  if (message.action === "refreshBanner") {
     await pollBanner();
-    const { britiveBanner } = await chrome.storage.local.get('britiveBanner');
+    const { britiveBanner } = await chrome.storage.local.get("britiveBanner");
     return { banner: britiveBanner || null };
   }
 
-  if (message.action === 'getCachedApprovals') {
+  if (message.action === "getCachedApprovals") {
     // Return cached approvals without API call
-    const session = await chrome.storage.session.get('cachedApprovalsList');
+    const session = await chrome.storage.session.get("cachedApprovalsList");
     return { approvals: session.cachedApprovalsList || [] };
   }
 
-  if (message.action === 'drainNotificationQueue') {
+  if (message.action === "drainNotificationQueue") {
     return { notifications: await drainWsNotificationQueue() };
   }
 
-  if (message.action === 'getApprovals') {
+  if (message.action === "getApprovals") {
     const approvals = await fetchApprovals();
     if (Array.isArray(approvals)) {
       await chrome.storage.session.set({
         pendingApprovalCount: approvals.length,
-        cachedApprovalsList: approvals
+        cachedApprovalsList: approvals,
       });
       await refreshBadge();
     }
     return { approvals };
   }
 
-  if (message.action === 'approveRequest') {
-    const result = await handleApprovalAction(message.requestId, true, message.comments);
+  if (message.action === "approveRequest") {
+    const result = await handleApprovalAction(
+      message.requestId,
+      true,
+      message.comments,
+    );
     if (result.success) {
-      const session = await chrome.storage.session.get(['pendingApprovalCount', 'cachedApprovalsList']);
+      const session = await chrome.storage.session.get([
+        "pendingApprovalCount",
+        "cachedApprovalsList",
+      ]);
       const newCount = Math.max(0, (session.pendingApprovalCount || 0) - 1);
-      const filtered = (session.cachedApprovalsList || []).filter(a => a.requestId !== message.requestId);
-      await chrome.storage.session.set({ pendingApprovalCount: newCount, cachedApprovalsList: filtered });
+      const filtered = (session.cachedApprovalsList || []).filter(
+        (a) => a.requestId !== message.requestId,
+      );
+      await chrome.storage.session.set({
+        pendingApprovalCount: newCount,
+        cachedApprovalsList: filtered,
+      });
       await refreshBadge();
     }
     return result;
   }
 
-  if (message.action === 'rejectRequest') {
-    const result = await handleApprovalAction(message.requestId, false, message.comments);
+  if (message.action === "rejectRequest") {
+    const result = await handleApprovalAction(
+      message.requestId,
+      false,
+      message.comments,
+    );
     if (result.success) {
-      const session = await chrome.storage.session.get(['pendingApprovalCount', 'cachedApprovalsList']);
+      const session = await chrome.storage.session.get([
+        "pendingApprovalCount",
+        "cachedApprovalsList",
+      ]);
       const newCount = Math.max(0, (session.pendingApprovalCount || 0) - 1);
-      const filtered = (session.cachedApprovalsList || []).filter(a => a.requestId !== message.requestId);
-      await chrome.storage.session.set({ pendingApprovalCount: newCount, cachedApprovalsList: filtered });
+      const filtered = (session.cachedApprovalsList || []).filter(
+        (a) => a.requestId !== message.requestId,
+      );
+      await chrome.storage.session.set({
+        pendingApprovalCount: newCount,
+        cachedApprovalsList: filtered,
+      });
       await refreshBadge();
     }
     return result;
   }
 
-  if (message.action === 'getSecretValue') {
+  if (message.action === "getSecretValue") {
     return await fetchSecretValue(message.path);
   }
 
-  if (message.action === 'startOAuthLogin') {
+  if (message.action === "startOAuthLogin") {
     return await startOAuthLogin(message.tenant);
   }
 
-  if (message.action === 'logout') {
-    const settings = await chrome.storage.local.get(['britiveSettings']);
+  if (message.action === "logout") {
+    const settings = await chrome.storage.local.get(["britiveSettings"]);
     if (settings.britiveSettings?.loginTimestamp) {
       settings.britiveSettings.loginTimestamp = null;
-      await chrome.storage.local.set({ britiveSettings: settings.britiveSettings });
+      await chrome.storage.local.set({
+        britiveSettings: settings.britiveSettings,
+      });
     }
     await britiveAPI.clearToken();
     return { success: true };
   }
 
-  if (message.action === 'approvalStatusChanged') {
-    return await handleApprovalStatusChanged(message.status, message.item, message.autoCheckout);
+  if (message.action === "approvalStatusChanged") {
+    return await handleApprovalStatusChanged(
+      message.status,
+      message.item,
+      message.autoCheckout,
+    );
   }
 
-  if (message.action === 'checkAuthenticationStatus') {
+  if (message.action === "checkAuthenticationStatus") {
     return await checkAuthenticationStatus();
   }
 
-  if (message.action === 'getUserProfile') {
+  if (message.action === "getUserProfile") {
     return await fetchUserProfile();
   }
 
-  if (message.action === 'getSecretTemplates') {
+  if (message.action === "getSecretTemplates") {
     const cached = await getCachedSecretTemplates();
     if (cached) return cached;
     return await fetchSecretTemplates();
   }
 
-  if (message.action === 'refreshSecretTemplates') {
+  if (message.action === "refreshSecretTemplates") {
     return await fetchSecretTemplates();
   }
 
-  if (message.action === 'getCollections') {
+  if (message.action === "getCollections") {
     const collections = await fetchCollections(message.userId);
     return { collections };
   }
 
-  if (message.action === 'getAccess') {
-    const access = await fetchAccess(message.collectionId, message.forceRefresh, message.favorites);
+  if (message.action === "getAccess") {
+    const access = await fetchAccess(
+      message.collectionId,
+      message.forceRefresh,
+      message.favorites,
+    );
     return { access };
   }
 
-  if (message.action === 'searchAccess') {
+  if (message.action === "searchAccess") {
     return await searchAccess(message.searchText);
   }
 
-  if (message.action === 'addToFavorites') {
-    return await addToFavorites(message.appContainerId, message.environmentId, message.papId, message.accessType);
+  if (message.action === "addToFavorites") {
+    return await addToFavorites(
+      message.appContainerId,
+      message.environmentId,
+      message.papId,
+      message.accessType,
+    );
   }
 
-  if (message.action === 'removeFromFavorites') {
+  if (message.action === "removeFromFavorites") {
     return await removeFromFavorites(message.papId);
   }
 
-  if (message.action === 'getProfileSettings') {
+  if (message.action === "getProfileSettings") {
     return await fetchProfileSettings(message.papId, message.environmentId);
   }
 
-  if (message.action === 'searchTickets') {
-    return await searchTickets(message.papId, message.environmentId, message.ticketType, message.query);
+  if (message.action === "searchTickets") {
+    return await searchTickets(
+      message.papId,
+      message.environmentId,
+      message.ticketType,
+      message.query,
+    );
   }
 
-  if (message.action === 'getApprovers') {
+  if (message.action === "getApprovers") {
     return await fetchApprovers(message.papId);
   }
 
-  if (message.action === 'submitApprovalRequest') {
-    return await submitApprovalRequest(message.papId, message.environmentId, message.justification, message.ticketId, message.ticketType);
+  if (message.action === "submitApprovalRequest") {
+    return await submitApprovalRequest(
+      message.papId,
+      message.environmentId,
+      message.justification,
+      message.ticketId,
+      message.ticketType,
+    );
   }
 
-  if (message.action === 'getApprovalStatus') {
+  if (message.action === "getApprovalStatus") {
     return await fetchApprovalStatus(message.requestId);
   }
 
-  if (message.action === 'setExtensionIcon') {
+  if (message.action === "setExtensionIcon") {
     const iconPath = message.crt
-      ? { 48: 'icons/britive-icon-crt-48.png', 96: 'icons/britive-icon-crt-96.png', 128: 'icons/britive-icon-crt-128.png' }
-      : { 48: 'icons/britive-icon-48.png', 96: 'icons/britive-icon-96.png', 128: 'icons/britive-icon-128.png' };
+      ? {
+          48: "icons/britive-icon-crt-48.png",
+          96: "icons/britive-icon-crt-96.png",
+          128: "icons/britive-icon-crt-128.png",
+        }
+      : {
+          48: "icons/britive-icon-48.png",
+          96: "icons/britive-icon-96.png",
+          128: "icons/britive-icon-128.png",
+        };
     chrome.action.setIcon({ path: iconPath });
     return { success: true };
   }
 
-  if (message.action === 'withdrawApprovalRequest') {
+  if (message.action === "withdrawApprovalRequest") {
     return await withdrawApprovalRequest(message.papId, message.environmentId);
   }
 
-  if (message.action === 'checkoutAccess') {
-    return await checkoutAccess(message.papId, message.environmentId, message.justification, message.otp, message.ticketId, message.ticketType);
+  if (message.action === "checkoutAccess") {
+    return await checkoutAccess(
+      message.papId,
+      message.environmentId,
+      message.justification,
+      message.otp,
+      message.ticketId,
+      message.ticketType,
+    );
   }
 
-  if (message.action === 'checkinAccess') {
+  if (message.action === "checkinAccess") {
     return await checkinAccess(message.transactionId);
   }
 
-  if (message.action === 'getAccessUrl') {
+  if (message.action === "getAccessUrl") {
     return await fetchAccessUrl(message.transactionId);
   }
 
-  if (message.action === 'getCheckedOutProfiles') {
+  if (message.action === "getCheckedOutProfiles") {
     return await fetchCheckedOutProfiles();
   }
 
-  if (message.action === 'setCheckoutExpiration') {
-    const { checkoutExpirations = {} } = await chrome.storage.local.get('checkoutExpirations');
+  if (message.action === "setCheckoutExpiration") {
+    const { checkoutExpirations = {} } = await chrome.storage.local.get(
+      "checkoutExpirations",
+    );
     checkoutExpirations[message.key] = message.expiration;
     await chrome.storage.local.set({ checkoutExpirations });
     // Schedule expiration notification if profile/env names provided
     if (message.profileName && message.envName) {
-      scheduleCheckoutExpirationNotification(message.key, message.profileName, message.envName, message.expiration);
+      scheduleCheckoutExpirationNotification(
+        message.key,
+        message.profileName,
+        message.envName,
+        message.expiration,
+      );
     }
     return { success: true };
   }
 
-  if (message.action === 'clearCheckoutExpiration') {
-    const { checkoutExpirations = {} } = await chrome.storage.local.get('checkoutExpirations');
+  if (message.action === "clearCheckoutExpiration") {
+    const { checkoutExpirations = {} } = await chrome.storage.local.get(
+      "checkoutExpirations",
+    );
     delete checkoutExpirations[message.key];
     await chrome.storage.local.set({ checkoutExpirations });
     clearCheckoutExpirationNotification(message.key);
     return { success: true };
   }
 
-  if (message.action === 'getCheckoutExpirations') {
-    const { checkoutExpirations = {} } = await chrome.storage.local.get('checkoutExpirations');
+  if (message.action === "getCheckoutExpirations") {
+    const { checkoutExpirations = {} } = await chrome.storage.local.get(
+      "checkoutExpirations",
+    );
     return { expirations: checkoutExpirations };
   }
 
@@ -579,7 +696,7 @@ async function handleMessage(message, sender) {
 function isSafeHttpUrl(url) {
   try {
     const parsed = new URL(url);
-    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
   } catch (e) {
     return false;
   }
@@ -593,20 +710,26 @@ async function openTabSafely(url) {
 async function startOAuthLogin(tenant) {
   try {
     if (!isValidTenant(tenant)) {
-      return { success: false, error: 'Invalid tenant name.' };
+      return { success: false, error: "Invalid tenant name." };
     }
 
     // Verify tenant exists before starting OAuth
     try {
       const healthResp = await fetch(`${getTenantBaseUrl(tenant)}/api/health`, {
-        method: 'GET',
-        signal: AbortSignal.timeout(8000)
+        method: "GET",
+        signal: AbortSignal.timeout(8000),
       });
       if (!healthResp.ok) {
-        return { success: false, error: `Tenant "${tenant}" not found. Check the name and try again.` };
+        return {
+          success: false,
+          error: `Tenant "${tenant}" not found. Check the name and try again.`,
+        };
       }
     } catch (healthErr) {
-      return { success: false, error: `Cannot reach tenant "${tenant}". Check the name and try again.` };
+      return {
+        success: false,
+        error: `Cannot reach tenant "${tenant}". Check the name and try again.`,
+      };
     }
 
     // Generate PKCE parameters
@@ -621,12 +744,12 @@ async function startOAuthLogin(tenant) {
     // Build the authorization URL
     const baseUrl = getTenantBaseUrl(tenant);
     const params = new URLSearchParams({
-      response_type: 'code',
+      response_type: "code",
       client_id: clientId,
       redirect_uri: redirectUri,
       state: state,
       code_challenge: codeChallenge,
-      code_challenge_method: 'S256'
+      code_challenge_method: "S256",
     });
     const authUrl = `${baseUrl}/api/auth/sso/oauth2/authorize?${params.toString()}`;
 
@@ -639,101 +762,135 @@ async function startOAuthLogin(tenant) {
         clientId,
         redirectUri,
         loginInProgress: true,
-        startTime: Date.now()
-      }
+        startTime: Date.now(),
+      },
     });
 
     // Launch the browser auth flow
-    let responseUrl;
+    let authResult;
     try {
-      responseUrl = await chrome.identity.launchWebAuthFlow({
+      const responseUrl = await chrome.identity.launchWebAuthFlow({
         url: authUrl,
-        interactive: true
+        interactive: true,
       });
+      authResult = parseOAuthResponseUrl(responseUrl, state);
     } catch (authErr) {
-      await chrome.storage.local.remove('britiveAuth');
+      await chrome.storage.local.remove("britiveAuth");
       const errMsg = normalizeError(authErr);
-      if (errMsg.includes('cancelled') || errMsg.includes('canceled') || errMsg.includes('closed') || errMsg.includes('user')) {
-        return { success: false, error: 'Login cancelled.' };
+      if (
+        errMsg.includes("cancelled") ||
+        errMsg.includes("canceled") ||
+        errMsg.includes("closed") ||
+        errMsg.includes("user")
+      ) {
+        return { success: false, error: "Login cancelled." };
       }
       return { success: false, error: `Authentication failed: ${errMsg}` };
     }
 
-    // Parse the authorization code and state from the redirect URL
-    const responseParams = new URL(responseUrl).searchParams;
-    const returnedCode = responseParams.get('code');
-    const returnedState = responseParams.get('state');
-    const errorParam = responseParams.get('error');
-
-    if (errorParam) {
-      await chrome.storage.local.remove('britiveAuth');
-      const errorDesc = responseParams.get('error_description') || errorParam;
-      return { success: false, error: `Authorization denied: ${errorDesc}` };
-    }
-
-    if (!returnedCode) {
-      await chrome.storage.local.remove('britiveAuth');
-      return { success: false, error: 'No authorization code received.' };
-    }
-
-    // Verify state matches to prevent CSRF
-    if (returnedState !== state) {
-      await chrome.storage.local.remove('britiveAuth');
-      return { success: false, error: 'State mismatch. Possible CSRF attack. Please try again.' };
+    if (!authResult.success) {
+      await chrome.storage.local.remove("britiveAuth");
+      return { success: false, error: authResult.error };
     }
 
     // Exchange the authorization code for tokens
-    const tokenResult = await exchangeCodeForTokens(tenant, returnedCode, codeVerifier, clientId, redirectUri);
+    const tokenResult = await exchangeCodeForTokens(
+      tenant,
+      authResult.code,
+      codeVerifier,
+      clientId,
+      redirectUri,
+    );
     if (!tokenResult.success) {
-      await chrome.storage.local.remove('britiveAuth');
+      await chrome.storage.local.remove("britiveAuth");
       return tokenResult;
     }
 
     // Clear transient auth state
-    await chrome.storage.local.remove('britiveAuth');
+    await chrome.storage.local.remove("britiveAuth");
 
     // Notify popup if it's open
-    chrome.runtime.sendMessage({
-      action: 'authenticationComplete',
-      success: true
-    }).catch(() => {});
+    chrome.runtime
+      .sendMessage({
+        action: "authenticationComplete",
+        success: true,
+      })
+      .catch(() => {});
 
     return {
       success: true,
-      message: 'Authentication successful.'
+      message: "Authentication successful.",
     };
   } catch (error) {
-    await reportError('startOAuthLogin', error, { tenant });
-    await chrome.storage.local.remove('britiveAuth');
+    await reportError("startOAuthLogin", error, { tenant });
+    await chrome.storage.local.remove("britiveAuth");
     return {
       success: false,
-      error: normalizeError(error)
+      error: normalizeError(error),
     };
   }
 }
 
+function parseOAuthResponseUrl(responseUrl, expectedState) {
+  if (!responseUrl) {
+    return {
+      success: false,
+      error: "No redirect URL returned from OAuth flow.",
+    };
+  }
+
+  const responseParams = new URL(responseUrl).searchParams;
+  const returnedCode = responseParams.get("code");
+  const returnedState = responseParams.get("state");
+  const errorParam = responseParams.get("error");
+
+  if (errorParam) {
+    const errorDesc = responseParams.get("error_description") || errorParam;
+    return { success: false, error: `Authorization denied: ${errorDesc}` };
+  }
+
+  if (!returnedCode) {
+    return { success: false, error: "No authorization code received." };
+  }
+
+  if (returnedState !== expectedState) {
+    return {
+      success: false,
+      error: "State mismatch. Possible CSRF attack. Please try again.",
+    };
+  }
+
+  return { success: true, code: returnedCode };
+}
+
 // Exchange authorization code for access + refresh tokens
-async function exchangeCodeForTokens(tenant, code, codeVerifier, clientId, redirectUri) {
+async function exchangeCodeForTokens(
+  tenant,
+  code,
+  codeVerifier,
+  clientId,
+  redirectUri,
+) {
   try {
     const baseUrl = getTenantBaseUrl(tenant);
     const tokenUrl = `${baseUrl}/api/auth/sso/oauth2/token`;
     const extVersion = chrome.runtime.getManifest().version;
 
     const body = new URLSearchParams({
-      grant_type: 'authorization_code',
+      grant_type: "authorization_code",
       code: code,
       code_verifier: codeVerifier,
       client_id: clientId,
-      redirect_uri: redirectUri
+      redirect_uri: redirectUri,
     });
 
     const response = await fetch(tokenUrl, {
-      method: 'POST',
+      method: "POST",
       headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'X-Britive-Extension': extVersion
+        "Content-Type": "application/x-www-form-urlencoded",
+        "X-Britive-Extension": extVersion,
       },
-      body: body.toString()
+      body: body.toString(),
     });
 
     if (!response.ok) {
@@ -752,16 +909,16 @@ async function exchangeCodeForTokens(tenant, code, codeVerifier, clientId, redir
     const refreshToken = data.refresh_token || data.refreshToken;
 
     if (!accessToken) {
-      return { success: false, error: 'No access token in response.' };
+      return { success: false, error: "No access token in response." };
     }
 
     // Extract expiration from JWT
     let expirationTime;
     try {
-      const payload = JSON.parse(atob(accessToken.split('.')[1]));
+      const payload = JSON.parse(atob(accessToken.split(".")[1]));
       expirationTime = payload.exp * 1000;
     } catch (_) {
-      expirationTime = Date.now() + (60 * 60 * 1000);
+      expirationTime = Date.now() + 60 * 60 * 1000;
     }
 
     // Store tokens
@@ -773,8 +930,8 @@ async function exchangeCodeForTokens(tenant, code, codeVerifier, clientId, redir
         clientId,
         expirationTime,
         authenticated: true,
-        loginTimestamp: Date.now()
-      }
+        loginTimestamp: Date.now(),
+      },
     });
 
     // Update API client
@@ -798,16 +955,26 @@ async function exchangeCodeForTokens(tenant, code, codeVerifier, clientId, redir
 
     return { success: true };
   } catch (error) {
-    await reportError('exchangeCodeForTokens', error, { tenant });
+    await reportError("exchangeCodeForTokens", error, { tenant });
     return { success: false, error: normalizeError(error) };
   }
 }
 
 // ---- Token Refresh (alarm-based for MV3 service worker) ----
 
+let refreshInProgress = false;
+
+function getPostLoginRefreshCooldownRemaining(settings) {
+  const loginTimestamp = settings?.loginTimestamp || 0;
+  if (!loginTimestamp) return 0;
+  const remaining =
+    POST_LOGIN_REFRESH_COOLDOWN_MS - (Date.now() - loginTimestamp);
+  return Math.max(remaining, 0);
+}
+
 function scheduleTokenRefreshAlarm(expirationTime) {
   // Refresh 5 minutes before expiry
-  const refreshAt = expirationTime - (5 * 60 * 1000);
+  const refreshAt = expirationTime - TOKEN_REFRESH_LEAD_TIME_MS;
   const now = Date.now();
 
   if (refreshAt <= now) {
@@ -819,51 +986,86 @@ function scheduleTokenRefreshAlarm(expirationTime) {
   // Chrome alarms require delayInMinutes >= ~0.08 (about 5 seconds)
   const delayMs = refreshAt - now;
   const delayMin = Math.max(delayMs / 60000, 0.08);
-  chrome.alarms.create('britive-token-refresh', { delayInMinutes: delayMin });
+  chrome.alarms.create("britive-token-refresh", { delayInMinutes: delayMin });
 }
 
 async function refreshAccessToken() {
   try {
-    const { britiveSettings } = await chrome.storage.local.get('britiveSettings');
-    if (!britiveSettings || !britiveSettings.refreshToken || !britiveSettings.tenant) {
+    if (refreshInProgress) {
       return false;
     }
 
+    const { britiveSettings } =
+      await chrome.storage.local.get("britiveSettings");
+    if (
+      !britiveSettings ||
+      !britiveSettings.refreshToken ||
+      !britiveSettings.tenant
+    ) {
+      return false;
+    }
+
+    const cooldownRemaining =
+      getPostLoginRefreshCooldownRemaining(britiveSettings);
+    if (cooldownRemaining > 0) {
+      return Boolean(
+        britiveSettings.bearerToken && isValidTenant(britiveSettings.tenant),
+      );
+    }
+
+    if (britiveSettings.expirationTime) {
+      const msUntilRefresh =
+        britiveSettings.expirationTime -
+        Date.now() -
+        TOKEN_REFRESH_LEAD_TIME_MS;
+      if (msUntilRefresh > 1000) {
+        scheduleTokenRefreshAlarm(britiveSettings.expirationTime);
+        return Boolean(
+          britiveSettings.bearerToken && isValidTenant(britiveSettings.tenant),
+        );
+      }
+    }
+
+    refreshInProgress = true;
+
     const tenant = britiveSettings.tenant;
-    const clientId = britiveSettings.clientId || await computeClientId(tenant);
+    const clientId =
+      britiveSettings.clientId || (await computeClientId(tenant));
     const baseUrl = getTenantBaseUrl(tenant);
     const tokenUrl = `${baseUrl}/api/auth/sso/oauth2/token`;
     const extVersion = chrome.runtime.getManifest().version;
 
     const body = new URLSearchParams({
-      grant_type: 'refresh_token',
+      grant_type: "refresh_token",
       refresh_token: britiveSettings.refreshToken,
-      client_id: clientId
+      client_id: clientId,
     });
 
     const response = await fetch(tokenUrl, {
-      method: 'POST',
+      method: "POST",
+      credentials: "omit",
       headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'X-Britive-Extension': extVersion
+        "Content-Type": "application/x-www-form-urlencoded",
+        "X-Britive-Extension": extVersion,
       },
-      body: body.toString()
+      body: body.toString(),
     });
 
     if (!response.ok) {
       await britiveAPI.clearToken();
-      chrome.notifications.create('britive-session-expired', {
-        type: 'basic',
-        iconUrl: chrome.runtime.getURL('icons/britive-icon-96.png'),
-        title: 'Britive Session Expired',
-        message: 'Your session has expired. Please log in again.'
+      chrome.notifications.create("britive-session-expired", {
+        type: "basic",
+        iconUrl: chrome.runtime.getURL("icons/britive-icon-96.png"),
+        title: "Britive Session Expired",
+        message: "Your session has expired. Please log in again.",
       });
       return false;
     }
 
     const data = await response.json();
     const newAccessToken = data.access_token || data.accessToken;
-    const newRefreshToken = data.refresh_token || data.refreshToken || britiveSettings.refreshToken;
+    const newRefreshToken =
+      data.refresh_token || data.refreshToken || britiveSettings.refreshToken;
 
     if (!newAccessToken) {
       await britiveAPI.clearToken();
@@ -872,10 +1074,10 @@ async function refreshAccessToken() {
 
     let expirationTime;
     try {
-      const payload = JSON.parse(atob(newAccessToken.split('.')[1]));
+      const payload = JSON.parse(atob(newAccessToken.split(".")[1]));
       expirationTime = payload.exp * 1000;
     } catch (_) {
-      expirationTime = Date.now() + (60 * 60 * 1000);
+      expirationTime = Date.now() + 60 * 60 * 1000;
     }
 
     await chrome.storage.local.set({
@@ -884,8 +1086,8 @@ async function refreshAccessToken() {
         bearerToken: newAccessToken,
         refreshToken: newRefreshToken,
         expirationTime,
-        clientId
-      }
+        clientId,
+      },
     });
 
     britiveAPI.bearerToken = newAccessToken;
@@ -895,12 +1097,12 @@ async function refreshAccessToken() {
       const wsCookieUrl = getWsCookieUrlForTenant(tenant);
       await chrome.cookies.set({
         url: wsCookieUrl,
-        name: 'auth',
+        name: "auth",
         value: newAccessToken,
-        path: '/api/websocket/',
+        path: "/api/websocket/",
         secure: true,
         httpOnly: true,
-        sameSite: 'no_restriction'
+        sameSite: "no_restriction",
       });
     } catch (_) {}
 
@@ -908,10 +1110,12 @@ async function refreshAccessToken() {
     scheduleTokenRefreshAlarm(expirationTime);
     return true;
   } catch (error) {
-    await reportError('refreshAccessToken', error);
+    await reportError("refreshAccessToken", error);
     // Retry in 60 seconds via alarm rather than giving up
-    chrome.alarms.create('britive-token-refresh', { delayInMinutes: 1 });
+    chrome.alarms.create("britive-token-refresh", { delayInMinutes: 1 });
     return false;
+  } finally {
+    refreshInProgress = false;
   }
 }
 
@@ -919,13 +1123,16 @@ async function refreshAccessToken() {
 
 async function checkAuthenticationStatus() {
   try {
-    const storage = await chrome.storage.local.get(['britiveSettings', 'britiveAuth']);
+    const storage = await chrome.storage.local.get([
+      "britiveSettings",
+      "britiveAuth",
+    ]);
 
     if (storage.britiveAuth && storage.britiveAuth.loginInProgress) {
       return {
         authenticated: false,
         loginInProgress: true,
-        message: 'Login in progress. Please complete authentication.'
+        message: "Login in progress. Please complete authentication.",
       };
     }
 
@@ -933,27 +1140,33 @@ async function checkAuthenticationStatus() {
       const expirationTime = storage.britiveSettings.expirationTime || 0;
       const now = Date.now();
 
-      if (now < expirationTime && isValidTenant(storage.britiveSettings.tenant)) {
+      if (
+        now < expirationTime &&
+        isValidTenant(storage.britiveSettings.tenant)
+      ) {
         britiveAPI.baseUrl = getTenantBaseUrl(storage.britiveSettings.tenant);
         britiveAPI.bearerToken = storage.britiveSettings.bearerToken;
 
         return {
           authenticated: true,
-          tenant: storage.britiveSettings.tenant
+          tenant: storage.britiveSettings.tenant,
         };
-      } else if (storage.britiveSettings.refreshToken && isValidTenant(storage.britiveSettings.tenant)) {
+      } else if (
+        storage.britiveSettings.refreshToken &&
+        isValidTenant(storage.britiveSettings.tenant)
+      ) {
         // Access token expired but we have a refresh token - try to refresh
         britiveAPI.baseUrl = getTenantBaseUrl(storage.britiveSettings.tenant);
         const refreshed = await refreshAccessToken();
         if (refreshed) {
           return {
             authenticated: true,
-            tenant: storage.britiveSettings.tenant
+            tenant: storage.britiveSettings.tenant,
           };
         }
         return {
           authenticated: false,
-          message: 'Session expired. Please log in again.'
+          message: "Session expired. Please log in again.",
         };
       } else {
         await chrome.storage.local.set({
@@ -962,23 +1175,23 @@ async function checkAuthenticationStatus() {
             bearerToken: null,
             refreshToken: null,
             clientId: null,
-            authenticated: false
-          }
+            authenticated: false,
+          },
         });
 
         return {
           authenticated: false,
-          message: 'Session expired. Please log in again.'
+          message: "Session expired. Please log in again.",
         };
       }
     }
 
     return {
       authenticated: false,
-      message: 'Not authenticated. Please log in.'
+      message: "Not authenticated. Please log in.",
     };
   } catch (error) {
-    await reportError('checkAuthenticationStatus', error);
+    await reportError("checkAuthenticationStatus", error);
     return { authenticated: false, error: normalizeError(error) };
   }
 }
@@ -987,26 +1200,27 @@ async function checkAuthenticationStatus() {
 
 async function fetchBritiveSecrets() {
   try {
-    const settings = await chrome.storage.local.get(['britiveSettings']);
+    const settings = await chrome.storage.local.get(["britiveSettings"]);
     if (!settings.britiveSettings || !settings.britiveSettings.tenant) {
-      return { error: 'Tenant not configured' };
+      return { error: "Tenant not configured" };
     }
 
     const vaultId = await britiveAPI.getVaultId();
 
     const params = new URLSearchParams({
-      recursiveSecrets: 'true',
-      getmetadata: 'true',
-      path: '/',
-      type: 'secret'
+      recursiveSecrets: "true",
+      getmetadata: "true",
+      path: "/",
+      type: "secret",
     });
 
     const response = await britiveAPI.makeRequest(
-      `/api/v1/secretmanager/vault/${vaultId}/secrets?${params.toString()}`
+      `/api/v1/secretmanager/vault/${vaultId}/secrets?${params.toString()}`,
     );
 
     if (Array.isArray(response)) return response;
-    if (response.result && Array.isArray(response.result)) return response.result;
+    if (response.result && Array.isArray(response.result))
+      return response.result;
     if (response.data && Array.isArray(response.data)) return response.data;
 
     return [];
@@ -1019,9 +1233,9 @@ async function fetchBritiveSecrets() {
 
 async function fetchSecretValue(path) {
   try {
-    const settings = await chrome.storage.local.get(['britiveSettings']);
+    const settings = await chrome.storage.local.get(["britiveSettings"]);
     if (!settings.britiveSettings || !settings.britiveSettings.tenant) {
-      return { error: 'Tenant not configured' };
+      return { error: "Tenant not configured" };
     }
 
     const vaultId = await britiveAPI.getVaultId();
@@ -1029,28 +1243,28 @@ async function fetchSecretValue(path) {
 
     const response = await britiveAPI.makeRequest(
       `/api/v1/secretmanager/vault/${vaultId}/accesssecrets?${params.toString()}`,
-      { method: 'POST', body: JSON.stringify({}) }
+      { method: "POST", body: JSON.stringify({}) },
     );
 
     if (response == null) {
-      return { error: 'No value returned from API' };
+      return { error: "No value returned from API" };
     }
 
     const raw = response.value !== undefined ? response.value : response;
 
-    if (typeof raw === 'string') {
-      return { fields: { 'Value': raw } };
+    if (typeof raw === "string") {
+      return { fields: { Value: raw } };
     }
 
-    if (typeof raw === 'object' && raw !== null) {
+    if (typeof raw === "object" && raw !== null) {
       const fields = {};
       for (const [k, v] of Object.entries(raw)) {
-        fields[k] = typeof v === 'object' ? stableStringify(v) : String(v);
+        fields[k] = typeof v === "object" ? stableStringify(v) : String(v);
       }
       return { fields };
     }
 
-    return { fields: { 'Value': String(raw) } };
+    return { fields: { Value: String(raw) } };
   } catch (error) {
     return { error: normalizeError(error) };
   }
@@ -1061,22 +1275,29 @@ async function fetchSecretValue(path) {
 // Validate and encode a single URL path segment to prevent path-traversal attacks.
 // Rejects values containing /, \, ?, #, & or the .. sequence.
 function safePath(segment) {
-  if (typeof segment !== 'string' || !segment || /[\/\\?#&]|\.\./.test(segment)) {
-    throw new Error('Invalid path parameter');
+  if (
+    typeof segment !== "string" ||
+    !segment ||
+    /[\/\\?#&]|\.\./.test(segment)
+  ) {
+    throw new Error("Invalid path parameter");
   }
   return encodeURIComponent(segment);
 }
 
 async function fetchCollections(userId) {
   try {
-    const settings = await chrome.storage.local.get(['britiveSettings']);
+    const settings = await chrome.storage.local.get(["britiveSettings"]);
     if (!settings.britiveSettings || !settings.britiveSettings.tenant) {
-      return { error: 'Tenant not configured' };
+      return { error: "Tenant not configured" };
     }
 
-    const response = await britiveAPI.makeRequest(`/api/access/${safePath(userId)}/filters`);
+    const response = await britiveAPI.makeRequest(
+      `/api/access/${safePath(userId)}/filters`,
+    );
     if (Array.isArray(response)) return response;
-    if (response.result && Array.isArray(response.result)) return response.result;
+    if (response.result && Array.isArray(response.result))
+      return response.result;
     if (response.data && Array.isArray(response.data)) return response.data;
 
     return [];
@@ -1093,22 +1314,26 @@ const ACCESS_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 async function fetchAccess(collectionId, forceRefresh, favorites) {
   try {
     // Determine cache key: use 'favorites' when no collection specified
-    const cacheKey = favorites ? '__favorites__' : collectionId;
+    const cacheKey = favorites ? "__favorites__" : collectionId;
 
     // Return cached data if available and not expired
-    if (!forceRefresh && accessCache && accessCache.collectionId === cacheKey &&
-      (Date.now() - accessCacheTime) < ACCESS_CACHE_TTL) {
+    if (
+      !forceRefresh &&
+      accessCache &&
+      accessCache.collectionId === cacheKey &&
+      Date.now() - accessCacheTime < ACCESS_CACHE_TTL
+    ) {
       return accessCache.data;
     }
 
-    const settings = await chrome.storage.local.get(['britiveSettings']);
+    const settings = await chrome.storage.local.get(["britiveSettings"]);
     if (!settings.britiveSettings || !settings.britiveSettings.tenant) {
-      return { error: 'Tenant not configured' };
+      return { error: "Tenant not configured" };
     }
 
     // Build the filter parameter: favorites vs collection-based
     const filterParam = favorites
-      ? 'filter=favorites'
+      ? "filter=favorites"
       : `filter=${encodeURIComponent(`collectionId eq "${collectionId}"`)}`;
     const pageSize = 100;
     let page = 0;
@@ -1118,7 +1343,7 @@ async function fetchAccess(collectionId, forceRefresh, favorites) {
     // Paginate until we have all results
     do {
       const response = await britiveAPI.makeRequest(
-        `/api/access?page=${page}&size=${pageSize}&${filterParam}`
+        `/api/access?page=${page}&size=${pageSize}&${filterParam}`,
       );
 
       if (response.error) return response;
@@ -1149,12 +1374,12 @@ async function fetchAccess(collectionId, forceRefresh, favorites) {
 
 async function searchAccess(searchText) {
   try {
-    const q = (searchText || '').trim();
+    const q = (searchText || "").trim();
     if (q.length < 3) {
       return { items: [], count: 0 };
     }
     const response = await britiveAPI.makeRequest(
-      `/api/access?page=0&size=20&searchText=${encodeURIComponent(q)}`
+      `/api/access?page=0&size=20&searchText=${encodeURIComponent(q)}`,
     );
     return { items: response.data || [], count: response.count || 0 };
   } catch (error) {
@@ -1162,11 +1387,21 @@ async function searchAccess(searchText) {
   }
 }
 
-async function addToFavorites(appContainerId, environmentId, papId, accessType) {
+async function addToFavorites(
+  appContainerId,
+  environmentId,
+  papId,
+  accessType,
+) {
   try {
-    await britiveAPI.makeRequest('/api/access/favorites', {
-      method: 'POST',
-      body: JSON.stringify({ appContainerId, environmentId, papId, accessType: accessType || 'CONSOLE' })
+    await britiveAPI.makeRequest("/api/access/favorites", {
+      method: "POST",
+      body: JSON.stringify({
+        appContainerId,
+        environmentId,
+        papId,
+        accessType: accessType || "CONSOLE",
+      }),
     });
     // Invalidate access cache so favorites list refreshes
     accessCache = null;
@@ -1179,7 +1414,7 @@ async function addToFavorites(appContainerId, environmentId, papId, accessType) 
 async function removeFromFavorites(papId) {
   try {
     await britiveAPI.makeRequest(`/api/access/favorites/${safePath(papId)}`, {
-      method: 'DELETE'
+      method: "DELETE",
     });
     accessCache = null;
     return { success: true };
@@ -1189,8 +1424,8 @@ async function removeFromFavorites(papId) {
 }
 
 function parseExpirationMs(value) {
-  if (value === null || value === undefined || value === '') return null;
-  if (typeof value === 'number' && Number.isFinite(value)) {
+  if (value === null || value === undefined || value === "") return null;
+  if (typeof value === "number" && Number.isFinite(value)) {
     return value < 1e12 ? value * 1000 : value;
   }
   const t = new Date(value).getTime();
@@ -1207,15 +1442,20 @@ function extractCheckedOutExpiration(co) {
     co && co.validUntil,
     co && co.validTill,
     co && co.checkoutExpiration,
-    co && co.checkedOutUntil
+    co && co.checkedOutUntil,
   ];
   for (const candidate of candidates) {
     const ms = parseExpirationMs(candidate);
     if (ms && ms > Date.now()) return ms;
   }
-  if (co && typeof co === 'object') {
+  if (co && typeof co === "object") {
     for (const [key, value] of Object.entries(co)) {
-      if (!/(expir|expire|expires|valid.*until|checkedout.*until|checkout.*until)/i.test(key)) continue;
+      if (
+        !/(expir|expire|expires|valid.*until|checkedout.*until|checkout.*until)/i.test(
+          key,
+        )
+      )
+        continue;
       const ms = parseExpirationMs(value);
       if (ms && ms > Date.now()) return ms;
     }
@@ -1223,12 +1463,34 @@ function extractCheckedOutExpiration(co) {
   return null;
 }
 
+function getCheckedOutAccessType(co) {
+  const rawType =
+    co?.accessType ||
+    co?.checkoutType ||
+    co?.type ||
+    co?.checkoutAccessType ||
+    "";
+  return typeof rawType === "string" ? rawType.toUpperCase() : "";
+}
+
+function isActiveConsoleCheckout(co) {
+  return Boolean(
+    co &&
+    (co.checkedIn === null ||
+      co.checkedIn === undefined ||
+      co.checkedIn === false) &&
+    getCheckedOutAccessType(co) === "CONSOLE",
+  );
+}
+
 async function upsertCheckoutExpirationsFromCheckedOut(checkedOutList) {
   if (!Array.isArray(checkedOutList) || checkedOutList.length === 0) return;
-  const { checkoutExpirations = {} } = await chrome.storage.local.get('checkoutExpirations');
+  const { checkoutExpirations = {} } = await chrome.storage.local.get(
+    "checkoutExpirations",
+  );
   let changed = false;
-  checkedOutList.forEach(co => {
-    if (!(co && (co.checkedIn === null || co.checkedIn === undefined || co.checkedIn === false))) return;
+  checkedOutList.forEach((co) => {
+    if (!isActiveConsoleCheckout(co)) return;
     const expiration = extractCheckedOutExpiration(co);
     if (!expiration) return;
     const key = `${co.papId}|${co.environmentId}|CONSOLE`;
@@ -1246,19 +1508,34 @@ async function fetchCheckedOutProfiles() {
   try {
     await britiveAPI.ensureInitialized();
     if (!britiveAPI.baseUrl || !britiveAPI.bearerToken) {
-      const { cachedCheckedOutProfiles = [] } = await chrome.storage.local.get('cachedCheckedOutProfiles');
+      const { cachedCheckedOutProfiles = [] } = await chrome.storage.local.get(
+        "cachedCheckedOutProfiles",
+      );
       await upsertCheckoutExpirationsFromCheckedOut(cachedCheckedOutProfiles);
-      return { checkedOut: Array.isArray(cachedCheckedOutProfiles) ? cachedCheckedOutProfiles : [] };
+      return {
+        checkedOut: Array.isArray(cachedCheckedOutProfiles)
+          ? cachedCheckedOutProfiles
+          : [],
+      };
     }
-    const response = await britiveAPI.makeRequest('/api/access/app-access-status');
-    await chrome.storage.local.set({ cachedCheckedOutProfiles: response || [] });
+    const response = await britiveAPI.makeRequest(
+      "/api/access/app-access-status",
+    );
+    await chrome.storage.local.set({
+      cachedCheckedOutProfiles: response || [],
+    });
     await upsertCheckoutExpirationsFromCheckedOut(response || []);
     return { checkedOut: response || [] };
   } catch (error) {
-    await reportError('fetchCheckedOutProfiles', error);
+    await reportError("fetchCheckedOutProfiles", error);
     try {
-      const { cachedCheckedOutProfiles = [] } = await chrome.storage.local.get('cachedCheckedOutProfiles');
-      if (Array.isArray(cachedCheckedOutProfiles) && cachedCheckedOutProfiles.length) {
+      const { cachedCheckedOutProfiles = [] } = await chrome.storage.local.get(
+        "cachedCheckedOutProfiles",
+      );
+      if (
+        Array.isArray(cachedCheckedOutProfiles) &&
+        cachedCheckedOutProfiles.length
+      ) {
         await upsertCheckoutExpirationsFromCheckedOut(cachedCheckedOutProfiles);
         return { checkedOut: cachedCheckedOutProfiles };
       }
@@ -1272,13 +1549,13 @@ async function fetchCheckedOutProfiles() {
 async function fetchAccessUrl(transactionId) {
   try {
     const response = await britiveAPI.makeRequest(
-      `/api/access/${safePath(transactionId)}/url`
+      `/api/access/${safePath(transactionId)}/url`,
     );
     // API may return JSON { url: "..." } or a plain URL string
-    const url = typeof response === 'string' ? response : (response.url || null);
+    const url = typeof response === "string" ? response : response.url || null;
     // Only return URLs with safe schemes to prevent open-redirect via API response
     if (url && !/^https?:\/\//i.test(url)) {
-      return { error: 'Invalid URL scheme returned by API' };
+      return { error: "Invalid URL scheme returned by API" };
     }
     return { url };
   } catch (error) {
@@ -1289,7 +1566,7 @@ async function fetchAccessUrl(transactionId) {
 async function fetchProfileSettings(papId, environmentId) {
   try {
     const response = await britiveAPI.makeRequest(
-      `/api/access/${safePath(papId)}/environments/${safePath(environmentId)}/settings`
+      `/api/access/${safePath(papId)}/environments/${safePath(environmentId)}/settings`,
     );
     return { success: true, settings: response };
   } catch (error) {
@@ -1299,8 +1576,9 @@ async function fetchProfileSettings(papId, environmentId) {
 
 async function searchTickets(papId, environmentId, ticketType, query) {
   try {
-    const endpoint = `/api/access/${safePath(papId)}/environments/${safePath(environmentId)}/itsm/${safePath(ticketType)}/search` +
-      (query ? `?searchText=${encodeURIComponent(query)}` : '');
+    const endpoint =
+      `/api/access/${safePath(papId)}/environments/${safePath(environmentId)}/itsm/${safePath(ticketType)}/search` +
+      (query ? `?searchText=${encodeURIComponent(query)}` : "");
     const response = await britiveAPI.makeRequest(endpoint);
     return { success: true, tickets: response.tickets || [] };
   } catch (error) {
@@ -1311,15 +1589,15 @@ async function searchTickets(papId, environmentId, ticketType, query) {
 async function fetchApprovers(papId) {
   try {
     const response = await britiveAPI.makeRequest(
-      '/api/v1/policy-admin/policies/approvers',
+      "/api/v1/policy-admin/policies/approvers",
       {
-        method: 'POST',
+        method: "POST",
         body: JSON.stringify({
-          consumer: 'papservice',
+          consumer: "papservice",
           resource: `${papId}/*`,
-          action: 'papservice.profile.access'
-        })
-      }
+          action: "papservice.profile.access",
+        }),
+      },
     );
     return { success: true, approvers: response };
   } catch (error) {
@@ -1327,7 +1605,13 @@ async function fetchApprovers(papId) {
   }
 }
 
-async function submitApprovalRequest(papId, environmentId, justification, ticketId, ticketType) {
+async function submitApprovalRequest(
+  papId,
+  environmentId,
+  justification,
+  ticketId,
+  ticketType,
+) {
   try {
     const body = {};
     if (justification) body.justification = justification;
@@ -1336,7 +1620,7 @@ async function submitApprovalRequest(papId, environmentId, justification, ticket
 
     const response = await britiveAPI.makeRequest(
       `/api/access/${safePath(papId)}/environments/${safePath(environmentId)}/approvalRequest`,
-      { method: 'POST', body: JSON.stringify(body) }
+      { method: "POST", body: JSON.stringify(body) },
     );
     // Invalidate cache after approval request
     accessCache = null;
@@ -1350,7 +1634,7 @@ async function withdrawApprovalRequest(papId, environmentId) {
   try {
     await britiveAPI.makeRequest(
       `/api/v1/approvals/consumer/papservice/resource?resourceId=${encodeURIComponent(papId)}/${encodeURIComponent(environmentId)}`,
-      { method: 'DELETE' }
+      { method: "DELETE" },
     );
     // Invalidate cache after withdrawal
     accessCache = null;
@@ -1362,11 +1646,11 @@ async function withdrawApprovalRequest(papId, environmentId) {
 
 async function fetchApprovalStatus(requestId) {
   if (!requestId) {
-    return { error: 'No request ID provided' };
+    return { error: "No request ID provided" };
   }
   try {
     const response = await britiveAPI.makeRequest(
-      `/api/v1/approvals/${safePath(requestId)}`
+      `/api/v1/approvals/${safePath(requestId)}`,
     );
     return { success: true, approval: response };
   } catch (error) {
@@ -1374,17 +1658,26 @@ async function fetchApprovalStatus(requestId) {
   }
 }
 
-async function checkoutAccess(papId, environmentId, justification, otp, ticketId, ticketType) {
+async function checkoutAccess(
+  papId,
+  environmentId,
+  justification,
+  otp,
+  ticketId,
+  ticketType,
+) {
   try {
     // Step-up auth (OTP) must be validated before the checkout POST
     if (otp) {
       try {
-        await britiveAPI.makeRequest(
-          '/api/step-up/authenticate/TOTP',
-          { method: 'POST', body: JSON.stringify({ otp }) }
-        );
+        await britiveAPI.makeRequest("/api/step-up/authenticate/TOTP", {
+          method: "POST",
+          body: JSON.stringify({ otp }),
+        });
       } catch (authErr) {
-        return { error: 'Step-up authentication failed. Check your OTP and try again.' };
+        return {
+          error: "Step-up authentication failed. Check your OTP and try again.",
+        };
       }
     }
 
@@ -1395,16 +1688,19 @@ async function checkoutAccess(papId, environmentId, justification, otp, ticketId
 
     const response = await britiveAPI.makeRequest(
       `/api/access/${safePath(papId)}/environments/${safePath(environmentId)}?accessType=CONSOLE`,
-      { method: 'POST', body: JSON.stringify(body) }
+      { method: "POST", body: JSON.stringify(body) },
     );
     // Invalidate cache after checkout
     accessCache = null;
     return { success: true, data: response };
   } catch (error) {
-    const errMsg = normalizeError(error, 'Checkout failed');
+    const errMsg = normalizeError(error, "Checkout failed");
 
     // Detect step-up auth required (403 PE-0028)
-    if (errMsg.includes('PE-0028') || errMsg.toLowerCase().includes('step up authentication required')) {
+    if (
+      errMsg.includes("PE-0028") ||
+      errMsg.toLowerCase().includes("step up authentication required")
+    ) {
       const mfaRegs = await fetchMfaRegistrations(false);
       if (hasTotpRegistered(mfaRegs)) {
         return { error: errMsg, stepUpRequired: true };
@@ -1413,7 +1709,10 @@ async function checkoutAccess(papId, environmentId, justification, otp, ticketId
         if (hasTotpRegistered(freshRegs)) {
           return { error: errMsg, stepUpRequired: true };
         }
-        return { error: 'Step-up authentication required but no TOTP device is registered. Please configure TOTP in your Britive profile.' };
+        return {
+          error:
+            "Step-up authentication required but no TOTP device is registered. Please configure TOTP in your Britive profile.",
+        };
       }
     }
 
@@ -1425,7 +1724,7 @@ async function checkinAccess(transactionId) {
   try {
     const response = await britiveAPI.makeRequest(
       `/api/access/${safePath(transactionId)}?type=API`,
-      { method: 'PUT' }
+      { method: "PUT" },
     );
     // Invalidate cache after checkin
     accessCache = null;
@@ -1440,18 +1739,18 @@ async function checkinAccess(transactionId) {
 async function fetchUserProfile(forceRefresh) {
   try {
     if (!forceRefresh) {
-      const cached = await chrome.storage.local.get('cachedUserProfile');
+      const cached = await chrome.storage.local.get("cachedUserProfile");
       if (cached.cachedUserProfile) {
         return { profile: cached.cachedUserProfile };
       }
     }
 
-    const settings = await chrome.storage.local.get(['britiveSettings']);
+    const settings = await chrome.storage.local.get(["britiveSettings"]);
     if (!settings.britiveSettings || !settings.britiveSettings.tenant) {
-      return { error: 'Tenant not configured' };
+      return { error: "Tenant not configured" };
     }
 
-    const profile = await britiveAPI.makeRequest('/api/access/users');
+    const profile = await britiveAPI.makeRequest("/api/access/users");
     await chrome.storage.local.set({ cachedUserProfile: profile });
     return { profile };
   } catch (error) {
@@ -1464,24 +1763,29 @@ async function fetchUserProfile(forceRefresh) {
 async function fetchMfaRegistrations(forceRefresh) {
   try {
     if (!forceRefresh) {
-      const cached = await chrome.storage.local.get('cachedMfaRegistrations');
+      const cached = await chrome.storage.local.get("cachedMfaRegistrations");
       if (cached.cachedMfaRegistrations) {
         return cached.cachedMfaRegistrations;
       }
     }
-    const response = await britiveAPI.makeRequest('/api/mfa/registrations?onlyAllowed=true');
+    const response = await britiveAPI.makeRequest(
+      "/api/mfa/registrations?onlyAllowed=true",
+    );
     const data = Array.isArray(response) ? response : [];
     await chrome.storage.local.set({ cachedMfaRegistrations: data });
     return data;
   } catch (error) {
-    await reportError('fetchMfaRegistrations', error);
+    await reportError("fetchMfaRegistrations", error);
     return [];
   }
 }
 
 function hasTotpRegistered(mfaRegistrations) {
-  return Array.isArray(mfaRegistrations) && mfaRegistrations.some(
-    r => r.factor === 'TOTP' && r.status === 'REGISTERED'
+  return (
+    Array.isArray(mfaRegistrations) &&
+    mfaRegistrations.some(
+      (r) => r.factor === "TOTP" && r.status === "REGISTERED",
+    )
   );
 }
 
@@ -1489,17 +1793,18 @@ function hasTotpRegistered(mfaRegistrations) {
 
 async function fetchApprovals() {
   try {
-    const settings = await chrome.storage.local.get(['britiveSettings']);
+    const settings = await chrome.storage.local.get(["britiveSettings"]);
     if (!settings.britiveSettings || !settings.britiveSettings.tenant) {
-      return { error: 'Tenant not configured' };
+      return { error: "Tenant not configured" };
     }
 
     const response = await britiveAPI.makeRequest(
-      '/api/v1/approvals/?requestType=myApprovals&filter=status eq PENDING&createdWithinDays=1'
+      "/api/v1/approvals/?requestType=myApprovals&filter=status eq PENDING&createdWithinDays=1",
     );
 
     if (Array.isArray(response)) return response;
-    if (response.result && Array.isArray(response.result)) return response.result;
+    if (response.result && Array.isArray(response.result))
+      return response.result;
     if (response.data && Array.isArray(response.data)) return response.data;
 
     return [];
@@ -1508,15 +1813,15 @@ async function fetchApprovals() {
   }
 }
 
-async function handleApprovalAction(requestId, approve, comments = '') {
+async function handleApprovalAction(requestId, approve, comments = "") {
   try {
-    const param = approve ? 'yes' : 'no';
+    const param = approve ? "yes" : "no";
     await britiveAPI.makeRequest(
       `/api/v1/approvals/${safePath(requestId)}?approveRequest=${param}`,
       {
-        method: 'PATCH',
-        body: JSON.stringify({ approverComment: comments })
-      }
+        method: "PATCH",
+        body: JSON.stringify({ approverComment: comments }),
+      },
     );
     return { success: true };
   } catch (error) {
@@ -1527,21 +1832,27 @@ async function handleApprovalAction(requestId, approve, comments = '') {
 // ── Token expiration alarm ──
 
 function scheduleExpirationAlarm(expirationTime) {
-  chrome.alarms.clear('britive-token-expiry');
+  chrome.alarms.clear("britive-token-expiry");
 
   const delay = expirationTime - Date.now();
   if (delay <= 0) return;
 
-  chrome.alarms.create('britive-token-expiry', {
-    when: expirationTime
+  chrome.alarms.create("britive-token-expiry", {
+    when: expirationTime,
   });
 }
 
 // ── Checkout expiration notifications (via chrome.alarms) ──
 
-async function scheduleCheckoutExpirationNotification(key, profileName, envName, expiresAt) {
+async function scheduleCheckoutExpirationNotification(
+  key,
+  profileName,
+  envName,
+  expiresAt,
+) {
   // Check if notifications are enabled
-  const { extensionSettings } = await chrome.storage.local.get('extensionSettings');
+  const { extensionSettings } =
+    await chrome.storage.local.get("extensionSettings");
   if (!(extensionSettings?.checkoutExpiryNotification ?? true)) return;
 
   clearCheckoutExpirationNotification(key);
@@ -1549,18 +1860,22 @@ async function scheduleCheckoutExpirationNotification(key, profileName, envName,
   const now = Date.now();
 
   // Warning alarm: 5 minutes before expiry
-  const warningTime = expiresAt - (5 * 60 * 1000);
+  const warningTime = expiresAt - 5 * 60 * 1000;
   if (warningTime > now) {
     chrome.alarms.create(`britive-checkout-warn|${key}`, { when: warningTime });
   }
 
   // Expiry alarm
   if (expiresAt > now) {
-    chrome.alarms.create(`britive-checkout-expired|${key}`, { when: expiresAt });
+    chrome.alarms.create(`britive-checkout-expired|${key}`, {
+      when: expiresAt,
+    });
   }
 
   // Store profile/env names for the alarm handler to use
-  const { checkoutNotificationMeta = {} } = await chrome.storage.session.get('checkoutNotificationMeta');
+  const { checkoutNotificationMeta = {} } = await chrome.storage.session.get(
+    "checkoutNotificationMeta",
+  );
   checkoutNotificationMeta[key] = { profileName, envName };
   await chrome.storage.session.set({ checkoutNotificationMeta });
 }
@@ -1573,75 +1888,125 @@ function clearCheckoutExpirationNotification(key) {
 async function clearAllCheckoutExpirationNotifications() {
   const allAlarms = await chrome.alarms.getAll();
   for (const alarm of allAlarms) {
-    if (alarm.name.startsWith('britive-checkout-warn|') || alarm.name.startsWith('britive-checkout-expired|')) {
+    if (
+      alarm.name.startsWith("britive-checkout-warn|") ||
+      alarm.name.startsWith("britive-checkout-expired|")
+    ) {
       chrome.alarms.clear(alarm.name);
     }
   }
-  await chrome.storage.session.remove('checkoutNotificationMeta');
+  await chrome.storage.session.remove("checkoutNotificationMeta");
 }
 
 // ── Banner polling via chrome.alarms ──
 
 const BANNER_BADGE_COLORS = {
-  INFO: '#3E5DE0',
-  WARNING: '#ffcb00',
-  CAUTION: '#dc3545',
+  INFO: "#3E5DE0",
+  WARNING: "#ffcb00",
+  CAUTION: "#dc3545",
 };
 
 function getApprovalTargetLabel(item) {
-  if (!item) return 'your access request';
-  const parts = [item.appName, item.profileName, item.environmentName].filter(Boolean);
-  return parts.length ? parts.join(' / ') : 'your access request';
+  if (!item) return "your access request";
+  const parts = [item.appName, item.profileName, item.environmentName].filter(
+    Boolean,
+  );
+  return parts.length ? parts.join(" / ") : "your access request";
+}
+
+function getAccessScopeKey(item) {
+  const raw = item?.raw || item || {};
+  const papId = raw.papId || raw.profile?.papId;
+  const environmentId = raw.environmentId || raw.environment?.environmentId;
+  return papId && environmentId ? `${papId}|${environmentId}` : null;
+}
+
+async function getCurrentAccessScope() {
+  const itemsByKey = new Map();
+  let accessCache_data;
+  try {
+    ({ accessCache_data } = await chrome.storage.local.get("accessCache_data"));
+  } catch (e) {
+    return itemsByKey;
+  }
+  if (!Array.isArray(accessCache_data)) return itemsByKey;
+
+  accessCache_data.forEach((item) => {
+    const key = getAccessScopeKey(item);
+    if (key && !itemsByKey.has(key)) itemsByKey.set(key, item);
+  });
+  return itemsByKey;
+}
+
+async function resolveScopedAccessTarget(papId, environmentId) {
+  if (!papId || !environmentId) return { inScope: false };
+  const itemsByKey = await getCurrentAccessScope();
+  const item = itemsByKey.get(`${papId}|${environmentId}`);
+  if (!item) return { inScope: false };
+  return {
+    inScope: true,
+    item,
+    target: getApprovalTargetLabel(item),
+  };
 }
 
 async function handleApprovalStatusChanged(status, item, autoCheckout) {
-  const normalizedStatus = String(status || '').toLowerCase();
+  const normalizedStatus = String(status || "").toLowerCase();
 
   // Skip if WS already delivered this notification (dedup)
-  const dedupKey = `${item?.papId || ''}|${item?.environmentId || ''}|${normalizedStatus}`;
+  const dedupKey = `${item?.papId || ""}|${item?.environmentId || ""}|${normalizedStatus}`;
   if (recentWsNotificationKeys.has(dedupKey)) {
     return { success: true, deduplicated: true };
   }
 
   const target = getApprovalTargetLabel(item);
-  let title = 'Britive Approval Update';
+  let title = "Britive Approval Update";
   let message = `${target} changed status.`;
 
-  if (normalizedStatus === 'approved') {
-    title = autoCheckout ? 'Britive Access Approved' : 'Britive Approval Granted';
+  if (normalizedStatus === "approved") {
+    title = autoCheckout
+      ? "Britive Access Approved"
+      : "Britive Approval Granted";
     message = autoCheckout
       ? `${target} was approved. Starting checkout.`
       : `${target} was approved.`;
-  } else if (normalizedStatus === 'rejected') {
-    title = 'Britive Approval Rejected';
+  } else if (normalizedStatus === "rejected") {
+    title = "Britive Approval Rejected";
     message = `${target} was rejected.`;
-  } else if (normalizedStatus === 'withdrawn' || normalizedStatus === 'cancelled') {
-    title = 'Britive Approval Closed';
+  } else if (
+    normalizedStatus === "withdrawn" ||
+    normalizedStatus === "cancelled"
+  ) {
+    title = "Britive Approval Closed";
     message = `${target} is no longer pending.`;
-  } else if (normalizedStatus === 'revoked') {
-    title = 'Britive Access Revoked';
+  } else if (normalizedStatus === "revoked") {
+    title = "Britive Access Revoked";
     message = `${target} has been revoked.`;
-  } else if (normalizedStatus === 'expired') {
-    title = 'Britive Approval Expired';
+  } else if (normalizedStatus === "expired") {
+    title = "Britive Approval Expired";
     message = `${target} expired before it was approved.`;
   }
 
   const notificationId = `britive-approval-${normalizedStatus}-${Date.now()}`;
-  chrome.notifications.create(notificationId, {
-    type: 'basic',
-    iconUrl: chrome.runtime.getURL('icons/britive-icon-96.png'),
-    title,
-    message
-  }).catch(() => {});
+  chrome.notifications
+    .create(notificationId, {
+      type: "basic",
+      iconUrl: chrome.runtime.getURL("icons/britive-icon-96.png"),
+      title,
+      message,
+    })
+    .catch(() => {});
 
-  chrome.runtime.sendMessage({
-    action: 'approvalStatusNotification',
-    status: normalizedStatus,
-    title,
-    message,
-    autoCheckout: !!autoCheckout,
-    item
-  }).catch(() => {});
+  chrome.runtime
+    .sendMessage({
+      action: "approvalStatusNotification",
+      status: normalizedStatus,
+      title,
+      message,
+      autoCheckout: !!autoCheckout,
+      item,
+    })
+    .catch(() => {});
 
   return { success: true };
 }
@@ -1651,7 +2016,7 @@ async function pollBanner() {
     await britiveAPI.ensureInitialized();
     if (!britiveAPI.baseUrl || !britiveAPI.bearerToken) return;
 
-    const banner = await britiveAPI.makeRequest('/api/banner');
+    const banner = await britiveAPI.makeRequest("/api/banner");
     await chrome.storage.local.set({ britiveBanner: banner || null });
 
     const hasBanner = !!(banner && banner.message);
@@ -1663,11 +2028,11 @@ async function pollBanner() {
       stopBannerPolling();
       stopApprovalsPolling();
       await refreshBadge();
-      chrome.notifications.create('britive-session-expired', {
-        type: 'basic',
-        iconUrl: chrome.runtime.getURL('icons/britive-icon-96.png'),
-        title: 'Britive Session Expired',
-        message: 'Your Britive session has expired. Please log in again.'
+      chrome.notifications.create("britive-session-expired", {
+        type: "basic",
+        iconUrl: chrome.runtime.getURL("icons/britive-icon-96.png"),
+        title: "Britive Session Expired",
+        message: "Your Britive session has expired. Please log in again.",
       });
     }
   }
@@ -1675,7 +2040,8 @@ async function pollBanner() {
 
 async function startBannerPolling() {
   stopBannerPolling();
-  const { extensionSettings } = await chrome.storage.local.get('extensionSettings');
+  const { extensionSettings } =
+    await chrome.storage.local.get("extensionSettings");
   if ((extensionSettings?.bannerCheck ?? true) === false) return;
 
   // chrome.alarms minimum period is 1 minute
@@ -1683,11 +2049,11 @@ async function startBannerPolling() {
   const periodInMinutes = intervalSec / 60;
 
   pollBanner();
-  chrome.alarms.create('britive-banner-poll', { periodInMinutes });
+  chrome.alarms.create("britive-banner-poll", { periodInMinutes });
 }
 
 function stopBannerPolling() {
-  chrome.alarms.clear('britive-banner-poll');
+  chrome.alarms.clear("britive-banner-poll");
 }
 
 // ── Approval + checked-out-profiles polling via chrome.alarms ──
@@ -1701,7 +2067,7 @@ async function pollApprovals() {
     const list = Array.isArray(approvals) ? approvals : [];
     await chrome.storage.session.set({
       pendingApprovalCount: list.length,
-      cachedApprovalsList: list
+      cachedApprovalsList: list,
     });
     await refreshBadge();
   } catch (error) {
@@ -1713,16 +2079,22 @@ async function pollCheckedOutProfiles() {
   try {
     await britiveAPI.ensureInitialized();
     if (!britiveAPI.baseUrl || !britiveAPI.bearerToken) return;
-    const response = await britiveAPI.makeRequest('/api/access/app-access-status');
-    await chrome.storage.local.set({ cachedCheckedOutProfiles: response || [] });
+    const response = await britiveAPI.makeRequest(
+      "/api/access/app-access-status",
+    );
+    await chrome.storage.local.set({
+      cachedCheckedOutProfiles: response || [],
+    });
 
     // Reconcile checkout expiration cache - remove entries for profiles no longer checked out
     try {
-      const { checkoutExpirations } = await chrome.storage.local.get('checkoutExpirations');
+      const { checkoutExpirations } = await chrome.storage.local.get(
+        "checkoutExpirations",
+      );
       if (checkoutExpirations && Object.keys(checkoutExpirations).length > 0) {
         const activeKeys = new Set();
-        (response || []).forEach(co => {
-          if (co.checkedIn === null || co.checkedIn === undefined || co.checkedIn === false) {
+        (response || []).forEach((co) => {
+          if (isActiveConsoleCheckout(co)) {
             activeKeys.add(`${co.papId}|${co.environmentId}|CONSOLE`);
           }
         });
@@ -1753,13 +2125,16 @@ async function startApprovalsPolling() {
 
   pollApprovals();
   pollCheckedOutProfiles();
-  chrome.alarms.create('britive-approvals-poll', { periodInMinutes });
+  chrome.alarms.create("britive-approvals-poll", { periodInMinutes });
 }
 
 function stopApprovalsPolling(preserveCache) {
-  chrome.alarms.clear('britive-approvals-poll');
+  chrome.alarms.clear("britive-approvals-poll");
   if (!preserveCache) {
-    chrome.storage.session.set({ pendingApprovalCount: 0, cachedApprovalsList: [] });
+    chrome.storage.session.set({
+      pendingApprovalCount: 0,
+      cachedApprovalsList: [],
+    });
   }
 }
 
@@ -1772,21 +2147,29 @@ const recentWsNotificationKeys = new Set(); // dedup: tracks WS-delivered events
 
 async function queueWsNotification(entry) {
   try {
-    const { wsNotificationQueue = [] } = await chrome.storage.session.get('wsNotificationQueue');
+    const { wsNotificationQueue = [] } = await chrome.storage.session.get(
+      "wsNotificationQueue",
+    );
     wsNotificationQueue.push(entry);
     const capped = wsNotificationQueue.slice(-WS_NOTIFICATION_QUEUE_CAP);
     await chrome.storage.session.set({ wsNotificationQueue: capped });
     refreshBadge();
-  } catch (e) { /* best effort */ }
+  } catch (e) {
+    /* best effort */
+  }
 }
 
 async function drainWsNotificationQueue() {
   try {
-    const { wsNotificationQueue = [] } = await chrome.storage.session.get('wsNotificationQueue');
+    const { wsNotificationQueue = [] } = await chrome.storage.session.get(
+      "wsNotificationQueue",
+    );
     await chrome.storage.session.set({ wsNotificationQueue: [] });
     refreshBadge();
     return wsNotificationQueue;
-  } catch (e) { return []; }
+  } catch (e) {
+    return [];
+  }
 }
 
 // ── WebSocket push notifications (via offscreen document) ──
@@ -1795,34 +2178,45 @@ async function drainWsNotificationQueue() {
 
 // Approval terminal event names from the backend
 const WS_APPROVAL_EVENTS = new Set([
-  'requestApproved', 'requestRejected', 'requestRevoked',
-  'requestCancelled', 'requestExpired'
+  "requestApproved",
+  "requestRejected",
+  "requestRevoked",
+  "requestCancelled",
+  "requestExpired",
 ]);
 
 // Checkout lifecycle events we act on
 const WS_CHECKOUT_EVENTS = new Set([
-  'checkedOut', 'checkedIn', 'checkedInExpired',
-  'checkOutFailed', 'checkOutTimeOut',
-  'checkInFailed', 'checkInTimeOut'
+  "checkedOut",
+  "checkedIn",
+  "checkedInExpired",
+  "checkOutFailed",
+  "checkOutTimeOut",
+  "checkInFailed",
+  "checkInTimeOut",
 ]);
 
 // Checkout events that warrant an error notification
 const WS_CHECKOUT_ERROR_EVENTS = new Set([
-  'checkOutFailed', 'checkOutTimeOut',
-  'checkInFailed', 'checkInTimeOut'
+  "checkOutFailed",
+  "checkOutTimeOut",
+  "checkInFailed",
+  "checkInTimeOut",
 ]);
 
 // Transient events (log only)
 const WS_TRANSIENT_EVENTS = new Set([
-  'checkOutSubmitted', 'checkOutInProgress',
-  'checkInSubmitted', 'checkInInProgress',
-  'Pending'
+  "checkOutSubmitted",
+  "checkOutInProgress",
+  "checkInSubmitted",
+  "checkInInProgress",
+  "Pending",
 ]);
 
 async function isPopupOpen() {
   try {
     const contexts = await chrome.runtime.getContexts({
-      contextTypes: ['POPUP']
+      contextTypes: ["POPUP"],
     });
     return contexts.length > 0;
   } catch (e) {
@@ -1832,13 +2226,13 @@ async function isPopupOpen() {
 
 async function ensureOffscreen() {
   const contexts = await chrome.runtime.getContexts({
-    contextTypes: ['OFFSCREEN_DOCUMENT']
+    contextTypes: ["OFFSCREEN_DOCUMENT"],
   });
   if (contexts.length > 0) return;
   await chrome.offscreen.createDocument({
-    url: 'offscreen.html',
-    reasons: ['WORKERS'],
-    justification: 'WebSocket connection for push notifications'
+    url: "offscreen.html",
+    reasons: ["WORKERS"],
+    justification: "WebSocket connection for push notifications",
   });
 }
 
@@ -1875,23 +2269,25 @@ async function connectNotificationSocket() {
   try {
     await chrome.cookies.set({
       url: getWsCookieUrlForBaseUrl(britiveAPI.baseUrl),
-      name: 'auth',
+      name: "auth",
       value: britiveAPI.bearerToken,
-      path: '/api/websocket/',
+      path: "/api/websocket/",
       secure: true,
       httpOnly: true,
-      sameSite: 'no_restriction'
+      sameSite: "no_restriction",
     });
   } catch (e) {}
 
   try {
     await ensureOffscreen();
-    chrome.runtime.sendMessage({
-      action: 'connectWs',
-      tenant,
-      bearerToken: britiveAPI.bearerToken,
-      extensionVersion: chrome.runtime.getManifest().version
-    }).catch(() => {});
+    chrome.runtime
+      .sendMessage({
+        action: "connectWs",
+        tenant,
+        bearerToken: britiveAPI.bearerToken,
+        extensionVersion: chrome.runtime.getManifest().version,
+      })
+      .catch(() => {});
     // wsConnecting stays true until wsConnected or wsDisconnected arrives
   } catch (e) {
     wsConnecting = false;
@@ -1903,15 +2299,17 @@ async function disconnectNotificationSocket() {
   wsReconnectDelay = 1000;
   wsConnecting = false;
   const closeTasks = [
-    chrome.runtime.sendMessage({ action: 'disconnectWs' }).catch(() => {}),
-    chrome.offscreen.closeDocument().catch(() => {})
+    chrome.runtime.sendMessage({ action: "disconnectWs" }).catch(() => {}),
+    chrome.offscreen.closeDocument().catch(() => {}),
   ];
   if (britiveAPI.baseUrl) {
     closeTasks.push(
-      chrome.cookies.remove({
-        url: getWsCookieUrlForBaseUrl(britiveAPI.baseUrl),
-        name: 'auth'
-      }).catch(() => {})
+      chrome.cookies
+        .remove({
+          url: getWsCookieUrlForBaseUrl(britiveAPI.baseUrl),
+          name: "auth",
+        })
+        .catch(() => {}),
     );
   }
   await Promise.all(closeTasks);
@@ -1919,7 +2317,7 @@ async function disconnectNotificationSocket() {
 
 function handleSocketEvent(eventName, payload) {
   // Ignore resource-profile events
-  if (payload && payload.consumer === 'resourceprofile') return;
+  if (payload && payload.consumer === "resourceprofile") return;
 
   const wsEventKey = `${eventName}|${stableStringify(payload)}`;
   if (recentWsEventKeys.has(wsEventKey)) {
@@ -1941,13 +2339,14 @@ function handleSocketEvent(eventName, payload) {
   }
 
   // addNotifications / allNotifications: check for approval-related notifications
-  if (eventName === 'addNotifications' || eventName === 'allNotifications') {
+  if (eventName === "addNotifications" || eventName === "allNotifications") {
     const items = Array.isArray(payload) ? payload : [];
-    const hasApprovalNotif = items.some(n =>
-      n.messageType === 'profile-approval' ||
-      n.messageType === 'profile-approval-status' ||
-      n.messageType === 'profile-approval-status-approver' ||
-      n.messageType === 'profile-approval-cancelled'
+    const hasApprovalNotif = items.some(
+      (n) =>
+        n.messageType === "profile-approval" ||
+        n.messageType === "profile-approval-status" ||
+        n.messageType === "profile-approval-status-approver" ||
+        n.messageType === "profile-approval-cancelled",
     );
     if (hasApprovalNotif) pollApprovals();
     return;
@@ -1955,78 +2354,77 @@ function handleSocketEvent(eventName, payload) {
 }
 
 async function handleWsApprovalEvent(eventName, payload) {
-  const status = eventName.replace(/^request/i, '').toLowerCase();
-  const papId = payload.papId || '';
-  const environmentId = payload.environmentId || '';
+  const status = eventName.replace(/^request/i, "").toLowerCase();
+  const papId = payload.papId || "";
+  const environmentId = payload.environmentId || "";
+
+  const scopedTarget = await resolveScopedAccessTarget(papId, environmentId);
+  if (!scopedTarget.inScope) return;
 
   // Track this event to suppress duplicate REST polling notification
   const dedupKey = `${papId}|${environmentId}|${status}`;
   recentWsNotificationKeys.add(dedupKey);
   setTimeout(() => recentWsNotificationKeys.delete(dedupKey), 30000);
 
-  // Resolve human-readable names from the access cache
-  let target = 'your access request';
-  try {
-    const { accessCache_data } = await chrome.storage.local.get('accessCache_data');
-    if (Array.isArray(accessCache_data)) {
-      const match = accessCache_data.find(a =>
-        a.raw && a.raw.papId === papId && a.raw.environmentId === environmentId);
-      if (match) {
-        const parts = [match.appName, match.profileName, match.environmentName].filter(Boolean);
-        if (parts.length) target = parts.join(' / ');
-      }
-    }
-  } catch (e) { /* best effort */ }
+  const target = scopedTarget.target;
 
-  let title = 'Britive Approval Update';
+  let title = "Britive Approval Update";
   let message = `${target} changed status.`;
 
-  if (status === 'approved') {
-    title = 'Britive Approval Granted';
+  if (status === "approved") {
+    title = "Britive Approval Granted";
     message = `${target} was approved.`;
-  } else if (status === 'rejected') {
-    title = 'Britive Approval Rejected';
+  } else if (status === "rejected") {
+    title = "Britive Approval Rejected";
     message = `${target} was rejected.`;
-  } else if (status === 'revoked') {
-    title = 'Britive Access Revoked';
+  } else if (status === "revoked") {
+    title = "Britive Access Revoked";
     message = `${target} has been revoked.`;
-  } else if (status === 'cancelled') {
-    title = 'Britive Approval Closed';
+  } else if (status === "cancelled") {
+    title = "Britive Approval Closed";
     message = `${target} is no longer pending.`;
-  } else if (status === 'expired') {
-    title = 'Britive Approval Expired';
+  } else if (status === "expired") {
+    title = "Britive Approval Expired";
     message = `${target} expired before it was approved.`;
   }
 
   const notificationId = `britive-ws-approval-${status}-${Date.now()}`;
-  chrome.notifications.create(notificationId, {
-    type: 'basic',
-    iconUrl: chrome.runtime.getURL('icons/britive-icon-96.png'),
-    title,
-    message
-  }).catch(() => {});
+  chrome.notifications
+    .create(notificationId, {
+      type: "basic",
+      iconUrl: chrome.runtime.getURL("icons/britive-icon-96.png"),
+      title,
+      message,
+    })
+    .catch(() => {});
 
   const approvalMsg = {
-    action: 'wsApprovalUpdate',
+    action: "wsApprovalUpdate",
     status,
     papId,
     environmentId,
     killSession: !!payload.killSession,
     statusText: payload.statusText || status,
-    message
+    message,
   };
   const queueEntry = {
-    type: 'approval',
+    type: "approval",
     status,
     papId,
     environmentId,
     message,
     title,
-    tone: status === 'approved' ? 'success'
-      : status === 'rejected' ? 'error'
-        : (status === 'expired' || status === 'revoked' || status === 'cancelled') ? 'warning'
-          : 'info',
-    timestamp: Date.now()
+    tone:
+      status === "approved"
+        ? "success"
+        : status === "rejected"
+          ? "error"
+          : status === "expired" ||
+              status === "revoked" ||
+              status === "cancelled"
+            ? "warning"
+            : "info",
+    timestamp: Date.now(),
   };
   // Check if popup is open; if so deliver directly, otherwise queue.
   // chrome.runtime.sendMessage goes to ALL extension pages including offscreen,
@@ -2044,58 +2442,75 @@ async function handleWsApprovalEvent(eventName, payload) {
 async function handleWsCheckoutEvent(eventName, payload) {
   const status = payload.status || eventName;
   const statusText = payload.statusText || eventName;
-  const papId = payload.papId || '';
-  const environmentId = payload.environmentId || '';
+  const papId = payload.papId || "";
+  const environmentId = payload.environmentId || "";
+
+  const scopedTarget = await resolveScopedAccessTarget(papId, environmentId);
+  if (!scopedTarget.inScope) return;
 
   if (WS_CHECKOUT_ERROR_EVENTS.has(eventName)) {
     const notificationId = `britive-ws-checkout-err-${Date.now()}`;
-    chrome.notifications.create(notificationId, {
-      type: 'basic',
-      iconUrl: chrome.runtime.getURL('icons/britive-icon-96.png'),
-      title: statusText,
-      message: payload.errorMessage || `${statusText} for your access.`
-    }).catch(() => {});
-  } else if (eventName === 'checkedInExpired') {
+    chrome.notifications
+      .create(notificationId, {
+        type: "basic",
+        iconUrl: chrome.runtime.getURL("icons/britive-icon-96.png"),
+        title: statusText,
+        message: payload.errorMessage || `${statusText} for your access.`,
+      })
+      .catch(() => {});
+  } else if (eventName === "checkedInExpired") {
     const notificationId = `britive-ws-checkout-expired-${Date.now()}`;
-    chrome.notifications.create(notificationId, {
-      type: 'basic',
-      iconUrl: chrome.runtime.getURL('icons/britive-icon-96.png'),
-      title: 'Checkout Expired',
-      message: 'Your checked-out access has expired.'
-    }).catch(() => {});
+    chrome.notifications
+      .create(notificationId, {
+        type: "basic",
+        iconUrl: chrome.runtime.getURL("icons/britive-icon-96.png"),
+        title: "Checkout Expired",
+        message: "Your checked-out access has expired.",
+      })
+      .catch(() => {});
   }
 
   const checkoutMsg = {
-    action: 'wsCheckoutUpdate',
+    action: "wsCheckoutUpdate",
     status,
     statusText,
     papId,
-    environmentId
+    environmentId,
   };
   // Check if popup is open; if so deliver directly, otherwise queue.
   // chrome.runtime.sendMessage goes to ALL extension pages including offscreen,
   // so we cannot rely on .catch() to detect a closed popup.
   const isError = WS_CHECKOUT_ERROR_EVENTS.has(eventName);
-  const isExpired = eventName === 'checkedInExpired';
-  const shouldQueue = isError || isExpired || eventName === 'checkedOut' || eventName === 'checkedIn';
-  const queueEntry = shouldQueue ? {
-    type: 'checkout',
-    status: eventName,
-    papId,
-    environmentId,
-    message: isError ? (payload.errorMessage || `${statusText} for your access.`)
-      : isExpired ? 'Your checked-out access has expired.'
-        : eventName === 'checkedOut' ? 'Access checked out successfully.'
-          : 'Access checked in successfully.',
-    title: isError ? statusText
-      : isExpired ? 'Checkout Expired'
-        : eventName === 'checkedOut' ? 'Checked Out'
-          : 'Checked In',
-    tone: isError ? 'error'
-      : isExpired ? 'warning'
-        : 'success',
-    timestamp: Date.now()
-  } : null;
+  const isExpired = eventName === "checkedInExpired";
+  const shouldQueue =
+    isError ||
+    isExpired ||
+    eventName === "checkedOut" ||
+    eventName === "checkedIn";
+  const queueEntry = shouldQueue
+    ? {
+        type: "checkout",
+        status: eventName,
+        papId,
+        environmentId,
+        message: isError
+          ? payload.errorMessage || `${statusText} for your access.`
+          : isExpired
+            ? "Your checked-out access has expired."
+            : eventName === "checkedOut"
+              ? "Access checked out successfully."
+              : "Access checked in successfully.",
+        title: isError
+          ? statusText
+          : isExpired
+            ? "Checkout Expired"
+            : eventName === "checkedOut"
+              ? "Checked Out"
+              : "Checked In",
+        tone: isError ? "error" : isExpired ? "warning" : "success",
+        timestamp: Date.now(),
+      }
+    : null;
 
   const popupOpen = await isPopupOpen();
   if (popupOpen) {
@@ -2112,105 +2527,136 @@ async function handleWsCheckoutEvent(eventName, payload) {
 // Approval count takes priority; falls back to banner "!".
 
 async function refreshBadge() {
-  const session = await chrome.storage.session.get(['pendingApprovalCount', 'lastBannerActive', 'wsNotificationQueue']);
+  const session = await chrome.storage.session.get([
+    "pendingApprovalCount",
+    "lastBannerActive",
+    "wsNotificationQueue",
+  ]);
   const count = session.pendingApprovalCount || 0;
   const hasBanner = session.lastBannerActive || false;
-  const queueLen = Array.isArray(session.wsNotificationQueue) ? session.wsNotificationQueue.length : 0;
+  const queueLen = Array.isArray(session.wsNotificationQueue)
+    ? session.wsNotificationQueue.length
+    : 0;
 
-  const { extensionSettings } = await chrome.storage.local.get('extensionSettings');
-  const isCrt = extensionSettings && extensionSettings.theme === 'crt';
-  const crtBadgeColor = '#0a0a0a';
+  const { extensionSettings } =
+    await chrome.storage.local.get("extensionSettings");
+  const isCrt = extensionSettings && extensionSettings.theme === "crt";
+  const crtBadgeColor = "#0a0a0a";
 
   if (count > 0) {
-    const text = count > 99 ? '99+' : String(count);
+    const text = count > 99 ? "99+" : String(count);
     chrome.action.setBadgeText({ text });
-    chrome.action.setBadgeBackgroundColor({ color: isCrt ? crtBadgeColor : '#CA1ECC' });
-    chrome.action.setBadgeTextColor({ color: isCrt ? '#aaffcc' : '#ffffff' });
+    chrome.action.setBadgeBackgroundColor({
+      color: isCrt ? crtBadgeColor : "#CA1ECC",
+    });
+    chrome.action.setBadgeTextColor({ color: isCrt ? "#aaffcc" : "#ffffff" });
   } else if (queueLen > 0) {
     // Unread WS notifications waiting for popup drain
-    const text = queueLen > 99 ? '99+' : String(queueLen);
+    const text = queueLen > 99 ? "99+" : String(queueLen);
     chrome.action.setBadgeText({ text });
-    chrome.action.setBadgeBackgroundColor({ color: isCrt ? crtBadgeColor : '#CA1ECC' });
-    chrome.action.setBadgeTextColor({ color: isCrt ? '#aaffcc' : '#ffffff' });
+    chrome.action.setBadgeBackgroundColor({
+      color: isCrt ? crtBadgeColor : "#CA1ECC",
+    });
+    chrome.action.setBadgeTextColor({ color: isCrt ? "#aaffcc" : "#ffffff" });
   } else if (hasBanner) {
-    const { britiveBanner, bannerDismissed } = await chrome.storage.local.get(['britiveBanner', 'bannerDismissed']);
-    const key = britiveBanner ? (britiveBanner.messageType || 'INFO') + ':' + britiveBanner.message : null;
+    const { britiveBanner, bannerDismissed } = await chrome.storage.local.get([
+      "britiveBanner",
+      "bannerDismissed",
+    ]);
+    const key = britiveBanner
+      ? (britiveBanner.messageType || "INFO") + ":" + britiveBanner.message
+      : null;
     if (bannerDismissed && key === bannerDismissed) {
       // User dismissed this banner - hide badge
-      chrome.action.setBadgeText({ text: '' });
+      chrome.action.setBadgeText({ text: "" });
       return;
     }
-    const color = BANNER_BADGE_COLORS[britiveBanner?.messageType] || '#3E5DE0';
-    chrome.action.setBadgeText({ text: '!' });
-    chrome.action.setBadgeBackgroundColor({ color: isCrt ? crtBadgeColor : color });
-    chrome.action.setBadgeTextColor({ color: isCrt ? '#aaffcc' : '#ffffff' });
+    const color = BANNER_BADGE_COLORS[britiveBanner?.messageType] || "#3E5DE0";
+    chrome.action.setBadgeText({ text: "!" });
+    chrome.action.setBadgeBackgroundColor({
+      color: isCrt ? crtBadgeColor : color,
+    });
+    chrome.action.setBadgeTextColor({ color: isCrt ? "#aaffcc" : "#ffffff" });
   } else {
-    chrome.action.setBadgeText({ text: '' });
+    chrome.action.setBadgeText({ text: "" });
   }
 }
 
 // ── Alarm listener ──
 
 chrome.alarms.onAlarm.addListener(async (alarm) => {
-  if (alarm.name === 'britive-token-refresh') {
+  if (alarm.name === "britive-token-refresh") {
     await refreshAccessToken();
     return;
-  } else if (alarm.name === 'britive-banner-poll') {
+  } else if (alarm.name === "britive-banner-poll") {
     await pollBanner();
-  } else if (alarm.name === 'britive-approvals-poll') {
+  } else if (alarm.name === "britive-approvals-poll") {
     await pollApprovals();
     await pollCheckedOutProfiles();
-  } else if (alarm.name === 'britive-token-expiry') {
-    chrome.notifications.create('britive-session-expired', {
-      type: 'basic',
-      iconUrl: chrome.runtime.getURL('icons/britive-icon-96.png'),
-      title: 'Britive Session Expired',
-      message: 'Your Britive session has expired. Please log in again.'
+  } else if (alarm.name === "britive-token-expiry") {
+    chrome.notifications.create("britive-session-expired", {
+      type: "basic",
+      iconUrl: chrome.runtime.getURL("icons/britive-icon-96.png"),
+      title: "Britive Session Expired",
+      message: "Your Britive session has expired. Please log in again.",
     });
-  } else if (alarm.name.startsWith('britive-checkout-warn|') || alarm.name.startsWith('britive-checkout-expired|')) {
-    const isWarning = alarm.name.startsWith('britive-checkout-warn|');
-    const key = alarm.name.split('|').slice(1).join('|');
-    const { checkoutNotificationMeta = {} } = await chrome.storage.session.get('checkoutNotificationMeta');
+  } else if (
+    alarm.name.startsWith("britive-checkout-warn|") ||
+    alarm.name.startsWith("britive-checkout-expired|")
+  ) {
+    const isWarning = alarm.name.startsWith("britive-checkout-warn|");
+    const key = alarm.name.split("|").slice(1).join("|");
+    const { checkoutNotificationMeta = {} } = await chrome.storage.session.get(
+      "checkoutNotificationMeta",
+    );
     const meta = checkoutNotificationMeta[key] || {};
-    const profileName = meta.profileName || 'Profile';
-    const envName = meta.envName || 'environment';
+    const profileName = meta.profileName || "Profile";
+    const envName = meta.envName || "environment";
 
     // Parse papId and environmentId from the key (format: "papId|environmentId")
-    const [expiryPapId, expiryEnvId] = key.split('|');
+    const [expiryPapId, expiryEnvId] = key.split("|");
+
+    const scopedTarget = await resolveScopedAccessTarget(
+      expiryPapId,
+      expiryEnvId,
+    );
+    if (!scopedTarget.inScope) return;
 
     if (isWarning) {
       const warnMsg = `${profileName} in ${envName} expires in 5 minutes.`;
       chrome.notifications.create(`britive-checkout-warn-${key}`, {
-        type: 'basic',
-        iconUrl: chrome.runtime.getURL('icons/britive-icon-96.png'),
-        title: 'Checkout Expiring Soon',
-        message: warnMsg
+        type: "basic",
+        iconUrl: chrome.runtime.getURL("icons/britive-icon-96.png"),
+        title: "Checkout Expiring Soon",
+        message: warnMsg,
       });
       // Send to popup if open (stopwatch icon)
-      chrome.runtime.sendMessage({
-        action: 'wsCheckoutExpiring',
-        papId: expiryPapId,
-        environmentId: expiryEnvId,
-        message: warnMsg
-      }).catch(() => {});
+      chrome.runtime
+        .sendMessage({
+          action: "wsCheckoutExpiring",
+          papId: expiryPapId,
+          environmentId: expiryEnvId,
+          message: warnMsg,
+        })
+        .catch(() => {});
       // Queue for drain on next popup open
       queueWsNotification({
-        type: 'checkoutExpiring',
-        status: 'expiringSoon',
+        type: "checkoutExpiring",
+        status: "expiringSoon",
         papId: expiryPapId,
         environmentId: expiryEnvId,
         message: warnMsg,
-        title: 'Checkout Expiring Soon',
-        tone: 'warning',
-        icon: '\u23F1',
-        timestamp: Date.now()
+        title: "Checkout Expiring Soon",
+        tone: "warning",
+        icon: "\u23F1",
+        timestamp: Date.now(),
       });
     } else {
       chrome.notifications.create(`britive-checkout-expired-${key}`, {
-        type: 'basic',
-        iconUrl: chrome.runtime.getURL('icons/britive-icon-96.png'),
-        title: 'Checkout Expired',
-        message: `${profileName} in ${envName} has expired.`
+        type: "basic",
+        iconUrl: chrome.runtime.getURL("icons/britive-icon-96.png"),
+        title: "Checkout Expired",
+        message: `${profileName} in ${envName} has expired.`,
       });
       // Clean up meta for this key
       delete checkoutNotificationMeta[key];
@@ -2228,26 +2674,37 @@ chrome.runtime.onInstalled.addListener(initializeOnWake);
 initializeOnWake();
 
 async function initializeOnWake() {
-  const { britiveSettings, extensionSettings } = await chrome.storage.local.get(['britiveSettings', 'extensionSettings']);
+  const { britiveSettings, extensionSettings } = await chrome.storage.local.get(
+    ["britiveSettings", "extensionSettings"],
+  );
 
   // Restore CRT icon if theme is set
-  if (extensionSettings && extensionSettings.theme === 'crt') {
-    chrome.action.setIcon({ path: { 48: 'icons/britive-icon-crt-48.png', 96: 'icons/britive-icon-crt-96.png', 128: 'icons/britive-icon-crt-128.png' } });
+  if (extensionSettings && extensionSettings.theme === "crt") {
+    chrome.action.setIcon({
+      path: {
+        48: "icons/britive-icon-crt-48.png",
+        96: "icons/britive-icon-crt-96.png",
+        128: "icons/britive-icon-crt-128.png",
+      },
+    });
   }
 
   // Clean up stale login-in-progress state
-  const { britiveAuth } = await chrome.storage.local.get('britiveAuth');
+  const { britiveAuth } = await chrome.storage.local.get("britiveAuth");
   if (britiveAuth && britiveAuth.loginInProgress) {
     const age = Date.now() - (britiveAuth.startTime || 0);
     if (age > 5 * 60 * 1000) {
-      await chrome.storage.local.remove('britiveAuth');
+      await chrome.storage.local.remove("britiveAuth");
     }
   }
 
   if (!britiveSettings || !isValidTenant(britiveSettings.tenant)) return;
 
   const now = Date.now();
-  const tokenValid = britiveSettings.bearerToken && britiveSettings.expirationTime && now < britiveSettings.expirationTime;
+  const tokenValid =
+    britiveSettings.bearerToken &&
+    britiveSettings.expirationTime &&
+    now < britiveSettings.expirationTime;
 
   if (tokenValid) {
     // Access token still valid
@@ -2278,7 +2735,7 @@ async function initializeOnWake() {
 // ── Watch for settings / tenant changes ──
 
 chrome.storage.onChanged.addListener(async (changes, area) => {
-  if (area !== 'local') return;
+  if (area !== "local") return;
 
   if (changes.extensionSettings) {
     await britiveAPI.ensureInitialized();
@@ -2295,7 +2752,7 @@ chrome.storage.onChanged.addListener(async (changes, area) => {
     } else if (!newBanner && oldBanner) {
       stopBannerPolling();
       await chrome.storage.session.set({ lastBannerActive: false });
-      await chrome.storage.local.remove('britiveBanner');
+      await chrome.storage.local.remove("britiveBanner");
       await refreshBadge();
     }
 
@@ -2303,10 +2760,9 @@ chrome.storage.onChanged.addListener(async (changes, area) => {
     const oldBannerInt = oldVal.bannerPollInterval || 60;
     const newBannerInt = newVal.bannerPollInterval || 60;
     if (oldBannerInt !== newBannerInt) {
-      const bannerAlarm = await chrome.alarms.get('britive-banner-poll');
+      const bannerAlarm = await chrome.alarms.get("britive-banner-poll");
       if (bannerAlarm) startBannerPolling();
     }
-
   }
 
   // Banner dismissed by user in popup - refresh badge
@@ -2323,29 +2779,36 @@ chrome.storage.onChanged.addListener(async (changes, area) => {
   if (newTenant && newTenant !== oldTenant) {
     await clearSecretsCache();
     await chrome.storage.local.remove([
-      'secretTemplates', 'secretUrlMap',
-      'cachedUserProfile', 'cachedMfaRegistrations', 'cachedCheckedOutProfiles',
-      'accessCache_data', 'accessCache_collectionId', 'accessCache_collectionName',
-      'accessCollapsedState', 'pendingApprovals', 'britiveBanner',
-      'checkoutExpirations'
+      "secretTemplates",
+      "secretUrlMap",
+      "cachedUserProfile",
+      "cachedMfaRegistrations",
+      "cachedCheckedOutProfiles",
+      "accessCache_data",
+      "accessCache_collectionId",
+      "accessCache_collectionName",
+      "accessCollapsedState",
+      "pendingApprovals",
+      "britiveBanner",
+      "checkoutExpirations",
     ]);
     accessCache = null;
     accessCacheTime = 0;
     britiveAPI.vaultId = null;
     britiveAPI.bearerToken = null;
 
-    chrome.alarms.clear('britive-token-expiry');
+    chrome.alarms.clear("britive-token-expiry");
     stopBannerPolling();
     stopApprovalsPolling();
     await disconnectNotificationSocket();
     await refreshBadge();
 
     if (!authenticated) {
-      chrome.notifications.create('britive-tenant-changed', {
-        type: 'basic',
-        iconUrl: chrome.runtime.getURL('icons/britive-icon-96.png'),
-        title: 'Britive Tenant Changed',
-        message: `Tenant set to ${newTenant}. Please log in to authenticate.`
+      chrome.notifications.create("britive-tenant-changed", {
+        type: "basic",
+        iconUrl: chrome.runtime.getURL("icons/britive-icon-96.png"),
+        title: "Britive Tenant Changed",
+        message: `Tenant set to ${newTenant}. Please log in to authenticate.`,
       });
     }
   }
@@ -2354,18 +2817,23 @@ chrome.storage.onChanged.addListener(async (changes, area) => {
 // ── Keyboard shortcut command handler ──
 
 chrome.commands.onCommand.addListener(async (command) => {
-  if (command === 'open-access-search' || command === 'open-approvals-tab' || command === 'open-secrets-search') {
+  if (
+    command === "open-access-search" ||
+    command === "open-approvals-tab" ||
+    command === "open-secrets-search"
+  ) {
     try {
-      const target = command === 'open-approvals-tab'
-        ? 'approvals-tab'
-        : command === 'open-secrets-search'
-          ? 'secrets-search'
-          : 'access-search';
+      const target =
+        command === "open-approvals-tab"
+          ? "approvals-tab"
+          : command === "open-secrets-search"
+            ? "secrets-search"
+            : "access-search";
       await chrome.storage.local.set({
         popupFocusIntent: {
           target,
-          ts: Date.now()
-        }
+          ts: Date.now(),
+        },
       });
       if (chrome.action && chrome.action.openPopup) {
         await chrome.action.openPopup();
@@ -2375,5 +2843,4 @@ chrome.commands.onCommand.addListener(async (command) => {
     }
     return;
   }
-
 });

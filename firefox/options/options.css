@@ -5,17 +5,17 @@
 }
 
 :root {
-  --bg-primary: #0B0B1A;
-  --bg-secondary: #12122A;
-  --bg-card: #1A1A35;
+  --bg-primary: #0b0b1a;
+  --bg-secondary: #12122a;
+  --bg-card: #1a1a35;
   --bg-hover: #222248;
   --border: rgba(255, 255, 255, 0.08);
-  --text-primary: #EDF6FB;
+  --text-primary: #edf6fb;
   --text-secondary: rgba(237, 246, 251, 0.6);
   --text-muted: rgba(237, 246, 251, 0.35);
-  --accent-purple: #CA1ECC;
-  --accent-blue: #3E5DE0;
-  --gradient: linear-gradient(135deg, #CA1ECC, #3E5DE0);
+  --accent-purple: #ca1ecc;
+  --accent-blue: #3e5de0;
+  --gradient: linear-gradient(135deg, #ca1ecc, #3e5de0);
   --radius: 8px;
   --radius-sm: 5px;
   --success-bg: rgba(40, 167, 69, 0.15);
@@ -35,10 +35,10 @@
 }
 
 :root.light {
-  --bg-primary: #F5F6FA;
-  --bg-secondary: #FFFFFF;
-  --bg-card: #F0F1F5;
-  --bg-hover: #E8E9F0;
+  --bg-primary: #f5f6fa;
+  --bg-secondary: #ffffff;
+  --bg-card: #f0f1f5;
+  --bg-hover: #e8e9f0;
   --border: rgba(0, 0, 0, 0.1);
   --text-primary: #040520;
   --text-secondary: rgba(4, 5, 32, 0.65);
@@ -60,7 +60,9 @@
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial,
+    sans-serif;
   font-size: 14px;
   line-height: 1.5;
   color: var(--text-primary);
