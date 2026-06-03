@@ -256,6 +256,8 @@ class BritiveAPI {
       "pendingApprovals",
       "bannerDismissed",
       "checkoutExpirations",
+      "checkoutExpirationMeta",
+      "seenPendingApprovalIds",
     ]);
     chrome.storage.session.set({ wsNotificationQueue: [] }).catch(() => {});
     clearAllCheckoutExpirationNotifications();
@@ -388,6 +390,168 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true; // keep the message channel open for async response
 });
 
+chrome.runtime.onInstalled.addListener(setupContextMenus);
+chrome.runtime.onStartup.addListener(setupContextMenus);
+setupContextMenus();
+
+function setupContextMenus() {
+  chrome.contextMenus.removeAll(() => {
+    chrome.contextMenus.create({
+      id: "britive-root",
+      title: "Britive",
+      contexts: ["page", "editable"],
+    });
+    chrome.contextMenus.create({
+      id: "britive-autofill-best",
+      parentId: "britive-root",
+      title: "Show autofill options",
+      contexts: ["page", "editable"],
+    });
+  });
+}
+
+chrome.contextMenus.onClicked.addListener((info, tab) => {
+  if (info.menuItemId !== "britive-autofill-best") return;
+  autofillBestMatchForContext(info, tab).catch(() => {});
+});
+
+async function autofillBestMatchForContext(info, tab) {
+  const pageUrl = info.pageUrl || info.frameUrl || tab?.url || "";
+  const tabId = tab?.id;
+  if (!tabId || !pageUrl) return;
+  const result = await getPasswordManagerCandidatesForUrl(pageUrl, false);
+  if (!result.candidates.length) {
+    chrome.notifications.create(`britive-autofill-none-${Date.now()}`, {
+      type: "basic",
+      iconUrl: chrome.runtime.getURL("icons/britive-icon-96.png"),
+      title: "Britive Autofill",
+      message: "No matching Password Manager secret found for this site.",
+    });
+    return;
+  }
+  await showAutofillPromptInTab(tabId, info.frameId, result.candidates);
+}
+
+async function autofillBestMatchForShortcut(tab) {
+  const pageUrl = tab?.url || "";
+  const tabId = tab?.id;
+  if (!tabId || !pageUrl) return;
+  const result = await getPasswordManagerCandidatesForUrl(pageUrl, false);
+  if (!result.candidates.length) {
+    chrome.notifications.create(`britive-autofill-none-${Date.now()}`, {
+      type: "basic",
+      iconUrl: chrome.runtime.getURL("icons/britive-icon-96.png"),
+      title: "Britive Autofill",
+      message: "No matching Password Manager secret found for this site.",
+    });
+    return;
+  }
+  const candidate = result.candidates[0];
+  await autofillSecret(candidate.path, candidate.username || "", tabId, null);
+}
+
+function formatFilledResult(result) {
+  const filled = ["username", "password", "otp"].filter((key) => result?.[key]);
+  return filled.length ? filled.join(", ") : "none";
+}
+
+async function showAutofillPromptInTab(tabId, targetFrameId, candidates) {
+  const target = { tabId };
+  if (Number.isInteger(targetFrameId) && targetFrameId >= 0) {
+    target.frameIds = [targetFrameId];
+  }
+  try {
+    await chrome.scripting.executeScript({
+      target,
+      func: runBritiveAutofillPrompt,
+      args: [candidates],
+    });
+  } catch (error) {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      func: runBritiveAutofillPrompt,
+      args: [candidates],
+    });
+  }
+}
+
+function runBritiveAutofillPrompt(candidates) {
+  const existing = document.getElementById("britive-autofill-prompt");
+  if (existing) existing.remove();
+
+  const overlay = document.createElement("div");
+  overlay.id = "britive-autofill-prompt";
+  overlay.style.cssText =
+    "position:fixed;z-index:2147483647;inset:auto 16px 16px auto;width:min(360px,calc(100vw - 32px));font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#edf6fb;background:#111126;border:1px solid rgba(255,255,255,.16);border-radius:14px;box-shadow:0 18px 60px rgba(0,0,0,.42);overflow:hidden;";
+
+  const header = document.createElement("div");
+  header.style.cssText =
+    "display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid rgba(255,255,255,.1);";
+  const title = document.createElement("div");
+  title.textContent = "Britive Autofill";
+  title.style.cssText = "font-weight:700;font-size:15px;";
+  const close = document.createElement("button");
+  close.textContent = "x";
+  close.style.cssText =
+    "border:0;background:transparent;color:#aeb3c8;font-size:18px;cursor:pointer;padding:2px 6px;";
+  close.addEventListener("click", () => overlay.remove());
+  header.append(title, close);
+  overlay.appendChild(header);
+
+  const body = document.createElement("div");
+  body.style.cssText = "padding:10px;";
+  const hint = document.createElement("div");
+  hint.textContent = "Choose credentials to fill on this page.";
+  hint.style.cssText = "font-size:12px;color:#aeb3c8;margin:2px 6px 10px;";
+  body.appendChild(hint);
+
+  candidates.slice(0, 6).forEach((candidate) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.style.cssText =
+      "display:block;width:100%;text-align:left;border:1px solid rgba(255,255,255,.1);background:#171732;color:#edf6fb;border-radius:10px;padding:10px 12px;margin:8px 0;cursor:pointer;";
+    const name = document.createElement("div");
+    name.textContent = candidate.name || "Password Manager secret";
+    name.style.cssText = "font-weight:700;font-size:14px;margin-bottom:4px;";
+    const detail = document.createElement("div");
+    const username = candidate.username || "username from secret";
+    detail.textContent = `${username} -> password${candidate.match === "exact" ? " (exact match)" : ""}`;
+    detail.style.cssText = "font-size:12px;color:#aeb3c8;";
+    button.append(name, detail);
+    button.addEventListener("click", async () => {
+      button.disabled = true;
+      detail.textContent = "Filling...";
+      try {
+        const response = await chrome.runtime.sendMessage({
+          action: "autofillSecret",
+          path: candidate.path,
+          username: candidate.username || "",
+        });
+        if (response?.error || response?.success === false) {
+          detail.textContent = response.error || "Autofill failed.";
+          button.disabled = false;
+          return;
+        }
+        detail.textContent = `Filled: ${formatFilledResult(response?.result || {})}.`;
+        setTimeout(() => overlay.remove(), 900);
+      } catch (error) {
+        detail.textContent = error.message || "Autofill failed.";
+        button.disabled = false;
+      }
+    });
+    body.appendChild(button);
+  });
+  overlay.appendChild(body);
+  document.documentElement.appendChild(overlay);
+
+  function formatFilledResult(result) {
+    const filled = ["username", "password", "otp"].filter(
+      (key) => result?.[key],
+    );
+    return filled.length ? filled.join(", ") : "none";
+  }
+}
+
 async function handleMessage(message, sender) {
   // WebSocket offscreen relay events
   if (message.action === "wsEventFromOffscreen") {
@@ -504,6 +668,26 @@ async function handleMessage(message, sender) {
 
   if (message.action === "getSecretValue") {
     return await fetchSecretValue(message.path);
+  }
+
+  if (message.action === "getPasswordManagerCandidates") {
+    return await getPasswordManagerCandidates(message.forceRefresh === true);
+  }
+
+  if (message.action === "getPasswordManagerCandidatesForUrl") {
+    return await getPasswordManagerCandidatesForUrl(
+      message.url || sender?.tab?.url || "",
+      message.forceRefresh === true,
+    );
+  }
+
+  if (message.action === "autofillSecret") {
+    return await autofillSecret(
+      message.path,
+      message.username || "",
+      sender?.tab?.id,
+      sender?.frameId,
+    );
   }
 
   if (message.action === "startOAuthLogin") {
@@ -658,7 +842,17 @@ async function handleMessage(message, sender) {
       "checkoutExpirations",
     );
     checkoutExpirations[message.key] = message.expiration;
-    await chrome.storage.local.set({ checkoutExpirations });
+    const { checkoutExpirationMeta = {} } = await chrome.storage.local.get(
+      "checkoutExpirationMeta",
+    );
+    checkoutExpirationMeta[message.key] = {
+      profileName: message.profileName || "Profile",
+      envName: message.envName || "environment",
+    };
+    await chrome.storage.local.set({
+      checkoutExpirations,
+      checkoutExpirationMeta,
+    });
     // Schedule expiration notification if profile/env names provided
     if (message.profileName && message.envName) {
       scheduleCheckoutExpirationNotification(
@@ -676,7 +870,14 @@ async function handleMessage(message, sender) {
       "checkoutExpirations",
     );
     delete checkoutExpirations[message.key];
-    await chrome.storage.local.set({ checkoutExpirations });
+    const { checkoutExpirationMeta = {} } = await chrome.storage.local.get(
+      "checkoutExpirationMeta",
+    );
+    delete checkoutExpirationMeta[message.key];
+    await chrome.storage.local.set({
+      checkoutExpirations,
+      checkoutExpirationMeta,
+    });
     clearCheckoutExpirationNotification(message.key);
     return { success: true };
   }
@@ -948,6 +1149,7 @@ async function exchangeCodeForTokens(
     // Post-login initialization
     startBannerPolling();
     startApprovalsPolling();
+    rescheduleCheckoutExpirationNotifications().catch(() => {});
     connectNotificationSocket();
     fetchSecretTemplates().catch(() => {});
     fetchUserProfile(true).catch(() => {});
@@ -1208,10 +1410,9 @@ async function fetchBritiveSecrets() {
     const vaultId = await britiveAPI.getVaultId();
 
     const params = new URLSearchParams({
+      path: "/",
       recursiveSecrets: "true",
       getmetadata: "true",
-      path: "/",
-      type: "secret",
     });
 
     const response = await britiveAPI.makeRequest(
@@ -1250,24 +1451,43 @@ async function fetchSecretValue(path) {
       return { error: "No value returned from API" };
     }
 
-    const raw = response.value !== undefined ? response.value : response;
-
-    if (typeof raw === "string") {
-      return { fields: { Value: raw } };
-    }
-
-    if (typeof raw === "object" && raw !== null) {
-      const fields = {};
-      for (const [k, v] of Object.entries(raw)) {
-        fields[k] = typeof v === "object" ? stableStringify(v) : String(v);
-      }
-      return { fields };
-    }
-
-    return { fields: { Value: String(raw) } };
+    return { fields: normalizeSecretFields(response) };
   } catch (error) {
     return { error: normalizeError(error) };
   }
+}
+
+function normalizeSecretFields(response) {
+  const raw =
+    response?.fields !== undefined
+      ? response.fields
+      : response?.value !== undefined
+        ? response.value
+        : response?.secret !== undefined
+          ? response.secret
+          : response?.data !== undefined
+            ? response.data
+            : response;
+
+  if (typeof raw === "string") {
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object")
+        return normalizeSecretFields(parsed);
+    } catch (e) {}
+    return { Value: raw };
+  }
+
+  if (typeof raw === "object" && raw !== null) {
+    const fields = {};
+    for (const [k, v] of Object.entries(raw)) {
+      fields[k] =
+        v && typeof v === "object" ? stableStringify(v) : String(v ?? "");
+    }
+    return fields;
+  }
+
+  return { Value: String(raw) };
 }
 
 // ── Access / Collections ──
@@ -1423,6 +1643,341 @@ async function removeFromFavorites(papId) {
   }
 }
 
+function getSecretMetadataValue(secret, key) {
+  const metadata = secret?.secretMetadata || {};
+  const match = Object.keys(metadata).find(
+    (name) => name.toLowerCase() === key.toLowerCase(),
+  );
+  return match ? metadata[match] : "";
+}
+
+function getFieldValue(fields, key) {
+  const match = Object.keys(fields || {}).find(
+    (name) => name.toLowerCase() === key.toLowerCase(),
+  );
+  return match ? fields[match] : "";
+}
+
+function getHostname(value) {
+  if (!value || typeof value !== "string") return "";
+  try {
+    const withScheme = /^[a-z][a-z0-9+.-]*:/i.test(value)
+      ? value
+      : `https://${value}`;
+    return new URL(withScheme).hostname.toLowerCase().replace(/^www\./, "");
+  } catch (e) {
+    return "";
+  }
+}
+
+function getPasswordManagerMatch(activeUrl, secretUrl) {
+  const activeHost = getHostname(activeUrl);
+  const secretHost = getHostname(secretUrl);
+  if (!activeHost || !secretHost) return null;
+  if (activeHost === secretHost) return "exact";
+  if (activeHost.endsWith(`.${secretHost}`)) return "domain";
+  return null;
+}
+
+async function getActiveTab() {
+  const isWebTab = (tab) => /^https?:\/\//i.test(tab?.url || "");
+  try {
+    const [tab] = await chrome.tabs.query({
+      active: true,
+      lastFocusedWindow: true,
+    });
+    if (isWebTab(tab)) return tab;
+  } catch (e) {}
+  try {
+    const windows = await chrome.windows.getAll({ windowTypes: ["normal"] });
+    for (const win of windows) {
+      const [tab] = await chrome.tabs.query({ active: true, windowId: win.id });
+      if (isWebTab(tab)) return tab;
+    }
+  } catch (e) {}
+  return null;
+}
+
+async function getPasswordManagerCandidates(forceRefresh) {
+  const { extensionSettings } =
+    await chrome.storage.local.get("extensionSettings");
+  if ((extensionSettings?.passwordManagerAutofill ?? true) === false) {
+    return { candidates: [], tabUrl: "" };
+  }
+
+  const tab = await getActiveTab();
+  if (!tab?.url) return { candidates: [], tabUrl: "" };
+
+  return await getPasswordManagerCandidatesForUrl(tab.url, forceRefresh);
+}
+
+function secretsNeedMetadataRefresh(secrets) {
+  return (secrets || []).some(
+    (secret) =>
+      secret.secretType === "Password Manager" &&
+      !getSecretMetadataValue(secret, "URL"),
+  );
+}
+
+async function getPasswordManagerCandidatesForUrl(activeUrl, forceRefresh) {
+  if (!activeUrl) return { candidates: [], tabUrl: "" };
+
+  let secrets = !forceRefresh ? await getCachedSecrets() : null;
+  if (Array.isArray(secrets) && secretsNeedMetadataRefresh(secrets)) {
+    secrets = null;
+  }
+  if (!secrets) {
+    secrets = await fetchBritiveSecrets();
+    if (!secrets.error) await setCachedSecrets(secrets);
+  }
+  if (!Array.isArray(secrets)) return { candidates: [], tabUrl: activeUrl };
+
+  const candidates = secrets
+    .filter((secret) => secret.secretType === "Password Manager")
+    .map((secret) => {
+      const url = getSecretMetadataValue(secret, "URL");
+      const match = getPasswordManagerMatch(activeUrl, url);
+      if (!match) return null;
+      return {
+        name: secret.name || "Unnamed Secret",
+        path: secret.path || "",
+        username: getSecretMetadataValue(secret, "Username"),
+        url,
+        match,
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => (a.match === b.match ? 0 : a.match === "exact" ? -1 : 1));
+
+  return { candidates, tabUrl: activeUrl };
+}
+
+async function autofillSecret(
+  path,
+  usernameFallback,
+  targetTabId,
+  targetFrameId,
+) {
+  const { extensionSettings } =
+    await chrome.storage.local.get("extensionSettings");
+  if ((extensionSettings?.passwordManagerAutofill ?? true) === false) {
+    return { error: "Autofill is disabled" };
+  }
+
+  const tab = targetTabId ? null : await getActiveTab();
+  const tabId = targetTabId || tab?.id;
+  if (!tabId) return { error: "No active tab available for autofill" };
+  const value = await fetchSecretValue(path);
+  if (value.error) return value;
+
+  const fields = value.fields || {};
+  const credential = {
+    username: getFieldValue(fields, "Username") || usernameFallback,
+    password: getFieldValue(fields, "Password"),
+    otp: getFieldValue(fields, "OTP"),
+    otpTtl: getFieldValue(fields, "OTP_TTL"),
+  };
+  if (!credential.username && !credential.password && !credential.otp) {
+    return { error: "Secret does not contain autofill fields" };
+  }
+
+  const result = await executeAutofillInTab(tabId, targetFrameId, credential);
+  const filled = result?.result || {};
+  if (result?.success && !filled.username && !filled.password && !filled.otp) {
+    const scanned = Number.isInteger(result.fieldsScanned)
+      ? ` (${result.fieldsScanned} fields scanned)`
+      : "";
+    return {
+      success: false,
+      error: `No fillable login fields found on this page${scanned}`,
+    };
+  }
+  return result;
+}
+
+async function executeAutofillInTab(tabId, targetFrameId, credential) {
+  const attempts = [];
+  if (Number.isInteger(targetFrameId) && targetFrameId >= 0) {
+    attempts.push({ tabId, frameIds: [targetFrameId] });
+  }
+  attempts.push({ tabId });
+  attempts.push({ tabId, allFrames: true });
+
+  let lastResult = null;
+  for (const target of attempts) {
+    try {
+      const results = await chrome.scripting.executeScript({
+        target,
+        func: runBritiveAutofill,
+        args: [credential],
+      });
+      for (const item of results || []) {
+        const result = item?.result;
+        const filled = result?.result || {};
+        if (result) lastResult = result;
+        if (filled.username || filled.password || filled.otp) return result;
+      }
+    } catch (error) {
+      lastResult = { success: false, error: error.message };
+    }
+  }
+  return (
+    lastResult || {
+      success: false,
+      error: "Autofill did not return a result",
+    }
+  );
+}
+
+function runBritiveAutofill(credential) {
+  function isVisible(el) {
+    if (!el || el.disabled || el.readOnly) return false;
+    const style = window.getComputedStyle(el);
+    if (style.display === "none" || style.visibility === "hidden") return false;
+    const rect = el.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  }
+
+  function setInputValue(el, value) {
+    const proto =
+      el instanceof HTMLTextAreaElement
+        ? HTMLTextAreaElement.prototype
+        : HTMLInputElement.prototype;
+    const descriptor = Object.getOwnPropertyDescriptor(proto, "value");
+    if (descriptor && descriptor.set) descriptor.set.call(el, value);
+    else el.value = value;
+    el.focus();
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+    el.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true }));
+  }
+
+  function isFillable(el) {
+    if (!el || !isVisible(el)) return false;
+    if (el.matches && el.matches("textarea")) return true;
+    if (!el.matches || !el.matches("input")) return false;
+    return ![
+      "button",
+      "checkbox",
+      "color",
+      "file",
+      "hidden",
+      "image",
+      "radio",
+      "range",
+      "reset",
+      "submit",
+    ].includes((el.type || "").toLowerCase());
+  }
+
+  function fieldText(el) {
+    const attrs = [
+      el.name,
+      el.id,
+      el.autocomplete,
+      el.placeholder,
+      el.getAttribute("aria-label"),
+    ];
+    if (el.id && window.CSS && CSS.escape) {
+      const label = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+      if (label) attrs.push(label.textContent);
+    }
+    if (el.labels) {
+      Array.from(el.labels).forEach((label) => attrs.push(label.textContent));
+    }
+    const wrappingLabel = el.closest("label");
+    if (wrappingLabel) attrs.push(wrappingLabel.textContent);
+    return attrs.filter(Boolean).join(" ").toLowerCase();
+  }
+
+  function isPasswordField(el) {
+    const type = (el.type || "").toLowerCase();
+    const text = fieldText(el);
+    return (
+      type === "password" ||
+      /(current-password|new-password|password|passcode|pass phrase|passphrase)/i.test(
+        text,
+      )
+    );
+  }
+
+  function isOtpField(el) {
+    return /(one-time-code|otp|totp|mfa|2fa|code|verification)/i.test(
+      fieldText(el),
+    );
+  }
+
+  function isUsernameField(el) {
+    const text = fieldText(el);
+    return (
+      !isPasswordField(el) &&
+      !isOtpField(el) &&
+      /(user|email|login|account|identifier)/i.test(text)
+    );
+  }
+
+  function findPasswordField(fields, activeField) {
+    if (activeField && isPasswordField(activeField)) return activeField;
+    return fields.find(isPasswordField) || null;
+  }
+
+  function findUsernameField(fields, passwordField, activeField) {
+    const candidates = fields.filter(
+      (el) => !isPasswordField(el) && !isOtpField(el),
+    );
+    if (activeField && candidates.includes(activeField)) return activeField;
+    const preferred = candidates.find(isUsernameField);
+    if (preferred) return preferred;
+    if (!passwordField) return candidates[0] || null;
+    const beforePassword = candidates.filter(
+      (el) =>
+        el.compareDocumentPosition(passwordField) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+    return beforePassword[beforePassword.length - 1] || candidates[0] || null;
+  }
+
+  function findOtpField(fields, activeField) {
+    if (activeField && isOtpField(activeField)) return activeField;
+    return fields.find(isOtpField) || null;
+  }
+
+  try {
+    const fields = Array.from(
+      document.querySelectorAll("input, textarea"),
+    ).filter(isFillable);
+    const activeField = isFillable(document.activeElement)
+      ? document.activeElement
+      : null;
+    const passwordField = findPasswordField(fields, activeField);
+    const usernameField = findUsernameField(fields, passwordField, activeField);
+    const otpField = credential.otp ? findOtpField(fields, activeField) : null;
+    const result = { username: false, password: false, otp: false };
+    if (usernameField && credential.username) {
+      setInputValue(usernameField, credential.username);
+      result.username = true;
+    }
+    if (passwordField && credential.password) {
+      setInputValue(passwordField, credential.password);
+      result.password = true;
+    }
+    if (otpField && credential.otp) {
+      setInputValue(otpField, credential.otp);
+      result.otp = true;
+    }
+    return {
+      success: true,
+      result,
+      fieldsScanned: fields.length,
+      usernameFieldFound: !!usernameField,
+      passwordFieldFound: !!passwordField,
+      otpFieldFound: !!otpField,
+    };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+}
+
 function parseExpirationMs(value) {
   if (value === null || value === undefined || value === "") return null;
   if (typeof value === "number" && Number.isFinite(value)) {
@@ -1485,22 +2040,37 @@ function isActiveConsoleCheckout(co) {
 
 async function upsertCheckoutExpirationsFromCheckedOut(checkedOutList) {
   if (!Array.isArray(checkedOutList) || checkedOutList.length === 0) return;
-  const { checkoutExpirations = {} } = await chrome.storage.local.get(
-    "checkoutExpirations",
-  );
+  const { checkoutExpirations = {}, checkoutExpirationMeta = {} } =
+    await chrome.storage.local.get([
+      "checkoutExpirations",
+      "checkoutExpirationMeta",
+    ]);
   let changed = false;
-  checkedOutList.forEach((co) => {
-    if (!isActiveConsoleCheckout(co)) return;
+  for (const co of checkedOutList) {
+    if (!isActiveConsoleCheckout(co)) continue;
     const expiration = extractCheckedOutExpiration(co);
-    if (!expiration) return;
+    if (!expiration) continue;
     const key = `${co.papId}|${co.environmentId}|CONSOLE`;
     if (!checkoutExpirations[key] || expiration > checkoutExpirations[key]) {
       checkoutExpirations[key] = expiration;
+      checkoutExpirationMeta[key] = {
+        profileName: co.profileName || co.papName || co.name || "Profile",
+        envName: co.environmentName || co.envName || "environment",
+      };
+      await scheduleCheckoutExpirationNotification(
+        key,
+        checkoutExpirationMeta[key].profileName,
+        checkoutExpirationMeta[key].envName,
+        expiration,
+      );
       changed = true;
     }
-  });
+  }
   if (changed) {
-    await chrome.storage.local.set({ checkoutExpirations });
+    await chrome.storage.local.set({
+      checkoutExpirations,
+      checkoutExpirationMeta,
+    });
   }
 }
 
@@ -1859,10 +2429,11 @@ async function scheduleCheckoutExpirationNotification(
 
   const now = Date.now();
 
-  // Warning alarm: 5 minutes before expiry
+  // Warning alarm: 5 minutes before expiry, or immediately if we woke in-window.
   const warningTime = expiresAt - 5 * 60 * 1000;
-  if (warningTime > now) {
-    chrome.alarms.create(`britive-checkout-warn|${key}`, { when: warningTime });
+  if (expiresAt > now) {
+    const when = warningTime > now ? warningTime : now + 1000;
+    chrome.alarms.create(`britive-checkout-warn|${key}`, { when });
   }
 
   // Expiry alarm
@@ -1878,6 +2449,37 @@ async function scheduleCheckoutExpirationNotification(
   );
   checkoutNotificationMeta[key] = { profileName, envName };
   await chrome.storage.session.set({ checkoutNotificationMeta });
+}
+
+async function rescheduleCheckoutExpirationNotifications() {
+  const { checkoutExpirations = {}, checkoutExpirationMeta = {} } =
+    await chrome.storage.local.get([
+      "checkoutExpirations",
+      "checkoutExpirationMeta",
+    ]);
+  const now = Date.now();
+  let changed = false;
+  for (const [key, expiresAt] of Object.entries(checkoutExpirations)) {
+    if (!expiresAt || expiresAt <= now) {
+      delete checkoutExpirations[key];
+      delete checkoutExpirationMeta[key];
+      changed = true;
+      continue;
+    }
+    const meta = checkoutExpirationMeta[key] || {};
+    await scheduleCheckoutExpirationNotification(
+      key,
+      meta.profileName || "Profile",
+      meta.envName || "environment",
+      expiresAt,
+    );
+  }
+  if (changed) {
+    await chrome.storage.local.set({
+      checkoutExpirations,
+      checkoutExpirationMeta,
+    });
+  }
 }
 
 function clearCheckoutExpirationNotification(key) {
@@ -2065,6 +2667,9 @@ async function pollApprovals() {
 
     const approvals = await fetchApprovals();
     const list = Array.isArray(approvals) ? approvals : [];
+    if (Array.isArray(approvals)) {
+      await notifyForNewPendingApprovals(list);
+    }
     await chrome.storage.session.set({
       pendingApprovalCount: list.length,
       cachedApprovalsList: list,
@@ -2085,12 +2690,15 @@ async function pollCheckedOutProfiles() {
     await chrome.storage.local.set({
       cachedCheckedOutProfiles: response || [],
     });
+    await upsertCheckoutExpirationsFromCheckedOut(response || []);
 
     // Reconcile checkout expiration cache - remove entries for profiles no longer checked out
     try {
-      const { checkoutExpirations } = await chrome.storage.local.get(
-        "checkoutExpirations",
-      );
+      const { checkoutExpirations, checkoutExpirationMeta = {} } =
+        await chrome.storage.local.get([
+          "checkoutExpirations",
+          "checkoutExpirationMeta",
+        ]);
       if (checkoutExpirations && Object.keys(checkoutExpirations).length > 0) {
         const activeKeys = new Set();
         (response || []).forEach((co) => {
@@ -2102,11 +2710,16 @@ async function pollCheckedOutProfiles() {
         for (const key of Object.keys(checkoutExpirations)) {
           if (!activeKeys.has(key)) {
             delete checkoutExpirations[key];
+            delete checkoutExpirationMeta[key];
+            clearCheckoutExpirationNotification(key);
             changed = true;
           }
         }
         if (changed) {
-          await chrome.storage.local.set({ checkoutExpirations });
+          await chrome.storage.local.set({
+            checkoutExpirations,
+            checkoutExpirationMeta,
+          });
         }
       }
     } catch (e) {
@@ -2142,16 +2755,63 @@ function stopApprovalsPolling(preserveCache) {
 // Stores WS notifications so the popup can show them as toasts when it opens.
 // Uses chrome.storage.session (survives service worker restarts within session).
 const WS_NOTIFICATION_QUEUE_CAP = 10;
+const WS_NOTIFICATION_TOAST_TTL_MS = 5 * 60 * 1000;
 const recentWsEventKeys = new Set();
 const recentWsNotificationKeys = new Set(); // dedup: tracks WS-delivered events to suppress REST duplicates
+
+function getApprovalRequestId(approval) {
+  return approval?.requestId || approval?.id || approval?.approvalId || "";
+}
+
+function getApprovalNotificationMessage(approval) {
+  const ctx = approval?.context || {};
+  const requester = approval?.userId || approval?.requestedBy || "Someone";
+  const resource = approval?.resourceName || ctx.profileName || "access";
+  return `${requester} requested ${resource}.`;
+}
+
+async function notifyForNewPendingApprovals(approvals) {
+  const currentIds = approvals.map(getApprovalRequestId).filter(Boolean);
+  const { seenPendingApprovalIds } = await chrome.storage.local.get(
+    "seenPendingApprovalIds",
+  );
+  if (!Array.isArray(seenPendingApprovalIds)) {
+    await chrome.storage.local.set({ seenPendingApprovalIds: currentIds });
+    return;
+  }
+
+  const seen = new Set(seenPendingApprovalIds);
+  const nextSeen = new Set(currentIds);
+  for (const approval of approvals) {
+    const requestId = getApprovalRequestId(approval);
+    if (!requestId || seen.has(requestId)) continue;
+    chrome.notifications.create(`britive-approval-${requestId}`, {
+      type: "basic",
+      iconUrl: chrome.runtime.getURL("icons/britive-icon-96.png"),
+      title: "New Approval Request",
+      message: getApprovalNotificationMessage(approval),
+    });
+  }
+  await chrome.storage.local.set({
+    seenPendingApprovalIds: Array.from(nextSeen),
+  });
+}
+
+function getFreshWsNotifications(items) {
+  const cutoff = Date.now() - WS_NOTIFICATION_TOAST_TTL_MS;
+  return (Array.isArray(items) ? items : []).filter(
+    (item) => !item.timestamp || item.timestamp > cutoff,
+  );
+}
 
 async function queueWsNotification(entry) {
   try {
     const { wsNotificationQueue = [] } = await chrome.storage.session.get(
       "wsNotificationQueue",
     );
-    wsNotificationQueue.push(entry);
-    const capped = wsNotificationQueue.slice(-WS_NOTIFICATION_QUEUE_CAP);
+    const fresh = getFreshWsNotifications(wsNotificationQueue);
+    fresh.push(entry);
+    const capped = fresh.slice(-WS_NOTIFICATION_QUEUE_CAP);
     await chrome.storage.session.set({ wsNotificationQueue: capped });
     refreshBadge();
   } catch (e) {
@@ -2164,9 +2824,10 @@ async function drainWsNotificationQueue() {
     const { wsNotificationQueue = [] } = await chrome.storage.session.get(
       "wsNotificationQueue",
     );
+    const fresh = getFreshWsNotifications(wsNotificationQueue);
     await chrome.storage.session.set({ wsNotificationQueue: [] });
     refreshBadge();
-    return wsNotificationQueue;
+    return fresh;
   } catch (e) {
     return [];
   }
@@ -2264,8 +2925,7 @@ async function connectNotificationSocket() {
 
   const tenant = getTenantHostFromBaseUrl(britiveAPI.baseUrl);
 
-  // Set the auth cookie scoped to /api/websocket/ so the offscreen WS upgrade
-  // carries it. The backend authenticates Socket.IO via the 'auth' cookie.
+  // Set the auth cookie scoped to /api/websocket/ so the v2 WS upgrade carries it.
   try {
     await chrome.cookies.set({
       url: getWsCookieUrlForBaseUrl(britiveAPI.baseUrl),
@@ -2316,6 +2976,14 @@ async function disconnectNotificationSocket() {
 }
 
 function handleSocketEvent(eventName, payload) {
+  if (
+    (WS_APPROVAL_EVENTS.has(eventName) || WS_CHECKOUT_EVENTS.has(eventName)) &&
+    Array.isArray(payload)
+  ) {
+    payload.forEach((item) => handleSocketEvent(eventName, item));
+    return;
+  }
+
   // Ignore resource-profile events
   if (payload && payload.consumer === "resourceprofile") return;
 
@@ -2534,9 +3202,16 @@ async function refreshBadge() {
   ]);
   const count = session.pendingApprovalCount || 0;
   const hasBanner = session.lastBannerActive || false;
-  const queueLen = Array.isArray(session.wsNotificationQueue)
-    ? session.wsNotificationQueue.length
-    : 0;
+  const freshQueue = getFreshWsNotifications(session.wsNotificationQueue);
+  const queueLen = freshQueue.length;
+  if (
+    Array.isArray(session.wsNotificationQueue) &&
+    freshQueue.length !== session.wsNotificationQueue.length
+  ) {
+    chrome.storage.session
+      .set({ wsNotificationQueue: freshQueue })
+      .catch(() => {});
+  }
 
   const { extensionSettings } =
     await chrome.storage.local.get("extensionSettings");
@@ -2726,6 +3401,7 @@ async function initializeOnWake() {
     if (refreshed) {
       startBannerPolling();
       startApprovalsPolling();
+      rescheduleCheckoutExpirationNotifications().catch(() => {});
       connectNotificationSocket();
       fetchSecretTemplates().catch(() => {});
     }
@@ -2791,6 +3467,8 @@ chrome.storage.onChanged.addListener(async (changes, area) => {
       "pendingApprovals",
       "britiveBanner",
       "checkoutExpirations",
+      "checkoutExpirationMeta",
+      "seenPendingApprovalIds",
     ]);
     accessCache = null;
     accessCacheTime = 0;
@@ -2817,6 +3495,14 @@ chrome.storage.onChanged.addListener(async (changes, area) => {
 // ── Keyboard shortcut command handler ──
 
 chrome.commands.onCommand.addListener(async (command) => {
+  if (command === "autofill-password-manager") {
+    try {
+      const tab = await getActiveTab();
+      await autofillBestMatchForShortcut(tab);
+    } catch (e) {}
+    return;
+  }
+
   if (
     command === "open-access-search" ||
     command === "open-approvals-tab" ||

@@ -10,13 +10,11 @@ let currentTenant = null;
 let currentBearerToken = null;
 let currentExtensionVersion = "unknown";
 let ws = null;
-let pingIntervalMs = 25000;
-let pingTimeoutMs = 5000;
-let pingTimer = null;
-let pingTimeoutTimer = null;
 let connected = false;
 let connecting = false;
 let intentionalDisconnect = false;
+let pingTimer = null;
+const PING_INTERVAL_MS = 5 * 60 * 1000;
 
 chrome.runtime.onMessage.addListener((message) => {
   if (message.action === "connectWs") {
@@ -38,7 +36,7 @@ function connectSocket(tenant) {
   connecting = true;
   currentTenant = tenant;
 
-  const wsUrl = `wss://${tenant}/api/websocket/push/notifications/?EIO=3&transport=websocket`;
+  const wsUrl = `wss://${tenant}/api/websocket/v2`;
 
   try {
     ws = new WebSocket(wsUrl);
@@ -50,121 +48,28 @@ function connectSocket(tenant) {
 
   ws.onopen = () => {
     connecting = false;
+    startPingTimer();
+    if (!connected) {
+      connected = true;
+      chrome.runtime.sendMessage({ action: "wsConnected" }).catch(() => {});
+    }
   };
 
   ws.onmessage = (event) => {
-    const raw = event.data;
-    if (typeof raw !== "string" || raw.length === 0) return;
-
-    const code = raw.charAt(0);
-
-    if (code === "0") {
-      // Engine.IO handshake: extract pingInterval and pingTimeout
-      try {
-        const handshake = JSON.parse(raw.substring(1));
-        pingIntervalMs = handshake.pingInterval || 25000;
-        pingTimeoutMs = handshake.pingTimeout || 5000;
-
-        clearPingTimer();
-        clearPingTimeout();
-
-        // Start client-side ping interval
-        pingTimer = setInterval(() => {
-          if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send("2");
-            // Arm pong timeout
-            clearPingTimeout();
-            pingTimeoutTimer = setTimeout(() => {
-              if (ws) {
-                try {
-                  ws.close();
-                } catch (err) {
-                  /* ignore */
-                }
-              }
-            }, pingTimeoutMs);
-          }
-        }, pingIntervalMs);
-
-        // Send Socket.IO namespace connect
-        if (ws && ws.readyState === WebSocket.OPEN) {
-          ws.send("40");
-        }
-      } catch (e) {}
-      return;
-    }
-
-    if (code === "1") {
-      // Engine.IO close request from server
-      if (ws) {
-        try {
-          ws.close();
-        } catch (e) {
-          /* ignore */
-        }
-      }
-      return;
-    }
-
-    if (raw === "3") {
-      // Pong from server - clear ping timeout
-      clearPingTimeout();
-      return;
-    }
-
-    if (raw === "40") {
-      // Socket.IO namespace connect ack
-      if (!connected) {
-        connected = true;
-        chrome.runtime.sendMessage({ action: "wsConnected" }).catch(() => {});
-      }
-      return;
-    }
-
-    if (raw === "41") {
-      // Socket.IO namespace disconnect from server
-      if (ws) {
-        try {
-          ws.close();
-        } catch (e) {
-          /* ignore */
-        }
-      }
-      return;
-    }
-
-    if (raw.startsWith("44")) {
-      // Socket.IO namespace error (e.g. auth failure)
-      if (ws) {
-        try {
-          ws.close();
-        } catch (e) {
-          /* ignore */
-        }
-      }
-      return;
-    }
-
-    if (raw.startsWith("42")) {
-      try {
-        const payload = JSON.parse(raw.substring(2));
-        if (Array.isArray(payload) && payload.length >= 2) {
-          chrome.runtime
-            .sendMessage({
-              action: "wsEventFromOffscreen",
-              eventName: payload[0],
-              payload: payload[1],
-            })
-            .catch(() => {});
-        }
-      } catch (e) {}
-      return;
-    }
+    const message = parseSocketMessage(event.data);
+    if (!message) return;
+    chrome.runtime
+      .sendMessage({
+        action: "wsEventFromOffscreen",
+        eventName: message.eventName,
+        payload: message.payload,
+      })
+      .catch(() => {});
   };
 
   ws.onclose = (event) => {
     connecting = false;
-    cleanupTimers();
+    clearPingTimer();
     ws = null;
     handleDisconnect();
   };
@@ -178,7 +83,7 @@ function disconnectSocket() {
   intentionalDisconnect = true;
   currentTenant = null;
   currentBearerToken = null;
-  cleanupTimers();
+  clearPingTimer();
   if (ws) {
     try {
       ws.close();
@@ -196,21 +101,23 @@ function disconnectSocket() {
 }
 
 function handleDisconnect() {
-  cleanupTimers();
+  const wasConnected = connected;
+  clearPingTimer();
   connected = false;
   connecting = false;
   ws = null;
 
   // Always notify the service worker so it can schedule a full reconnect
   // (which includes re-setting the auth cookie before connecting).
-  if (!intentionalDisconnect) {
+  if (!intentionalDisconnect || wasConnected) {
     chrome.runtime.sendMessage({ action: "wsDisconnected" }).catch(() => {});
   }
 }
 
-function cleanupTimers() {
+function startPingTimer() {
   clearPingTimer();
-  clearPingTimeout();
+  sendPing();
+  pingTimer = setInterval(sendPing, PING_INTERVAL_MS);
 }
 
 function clearPingTimer() {
@@ -220,9 +127,33 @@ function clearPingTimer() {
   }
 }
 
-function clearPingTimeout() {
-  if (pingTimeoutTimer) {
-    clearTimeout(pingTimeoutTimer);
-    pingTimeoutTimer = null;
+function sendPing() {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  try {
+    ws.send(JSON.stringify(["ping"]));
+  } catch (e) {
+    try {
+      ws.close();
+    } catch (_) {}
   }
+}
+
+function parseSocketMessage(raw) {
+  if (typeof raw !== "string" || raw.length === 0) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed) && typeof parsed[0] === "string") {
+      return { eventName: parsed[0], payload: parsed[1] };
+    }
+    if (parsed && typeof parsed === "object") {
+      const eventName = parsed.eventName || parsed.event || parsed.type;
+      if (typeof eventName === "string") {
+        return {
+          eventName,
+          payload: parsed.payload ?? parsed.data ?? parsed.message,
+        };
+      }
+    }
+  } catch (e) {}
+  return null;
 }

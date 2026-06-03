@@ -109,11 +109,23 @@
 
         <div class="form-group">
           <label>
-            <input type="checkbox" id="show-all-secret-types" />
-            Show all secret types
+            <input type="checkbox" id="password-manager-autofill" checked />
+            Enable auto-fill
           </label>
           <p class="help-text">
-            When off, only web credential secrets are shown in My Secrets
+            Show Autofill actions for matching Password Manager secrets.
+          </p>
+        </div>
+      </section>
+
+      <section class="settings-section">
+        <h2>Secrets</h2>
+
+        <div class="form-group">
+          <label>Secret types to display:</label>
+          <div id="visible-secret-types" class="secret-type-options"></div>
+          <p class="help-text">
+            Select which secret types to display in My Secrets.
           </p>
         </div>
       </section>

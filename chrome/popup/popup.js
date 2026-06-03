@@ -14,6 +14,8 @@ const defaultSettings = {
   bannerCheck: true,
   bannerPollInterval: 60,
   showAllSecretTypes: false,
+  visibleSecretTypes: ["Password Manager", "GenericWebApp", "WebApp With OTP"],
+  passwordManagerAutofill: true,
   zoomLevel: 100,
   theme: "dark",
   collectionName: "",
@@ -25,6 +27,13 @@ const defaultSettings = {
   textButtons: false,
   autoCheckoutOnApproval: false,
 };
+
+const PASSWORD_MANAGER_SECRET_TYPE = "Password Manager";
+const DEFAULT_VISIBLE_SECRET_TYPES = [
+  PASSWORD_MANAGER_SECRET_TYPE,
+  "GenericWebApp",
+  "WebApp With OTP",
+];
 
 function getStoredSettings(settings) {
   return { ...defaultSettings, ...(settings || {}) };
@@ -415,6 +424,7 @@ chrome.storage.local.get("extensionSettings").then(({ extensionSettings }) => {
 });
 
 let secretTemplates = null; // { webTypes: [...], allTypes: [...] }
+let autofillCandidates = new Map(); // secret path -> metadata match for active tab
 
 async function applyZoom() {
   const { extensionSettings } =
@@ -672,9 +682,84 @@ async function loadSecretTemplates() {
     const response = await chrome.runtime.sendMessage({
       action: "getSecretTemplates",
     });
-    if (response && response.webTypes) {
+    if (response && response.allTypes) {
       secretTemplates = response;
+      await renderVisibleSecretTypeOptions();
     }
+  } catch (e) {}
+}
+
+function getKnownSecretTypes(secrets) {
+  const types = new Set(DEFAULT_VISIBLE_SECRET_TYPES);
+  if (secretTemplates?.allTypes) {
+    secretTemplates.allTypes.forEach((type) => {
+      if (type?.secretType) types.add(type.secretType);
+    });
+  }
+  (secrets || currentSecrets || []).forEach((secret) => {
+    if (secret.secretType) types.add(secret.secretType);
+  });
+  return Array.from(types).sort((a, b) => a.localeCompare(b));
+}
+
+function getVisibleSecretTypes(settings, secrets) {
+  if (Array.isArray(settings.visibleSecretTypes)) {
+    return settings.visibleSecretTypes.length
+      ? settings.visibleSecretTypes
+      : DEFAULT_VISIBLE_SECRET_TYPES;
+  }
+  return settings.showAllSecretTypes
+    ? getKnownSecretTypes(secrets)
+    : DEFAULT_VISIBLE_SECRET_TYPES;
+}
+
+async function renderVisibleSecretTypeOptions() {
+  const container = document.getElementById("sb-visible-secret-types");
+  if (!container) return;
+  const { extensionSettings } =
+    await chrome.storage.local.get("extensionSettings");
+  const settings = getStoredSettings(extensionSettings);
+  const visibleTypes = new Set(getVisibleSecretTypes(settings, currentSecrets));
+  clearElement(container);
+  getKnownSecretTypes(currentSecrets).forEach((type) => {
+    const label = document.createElement("label");
+    label.className = "sidebar-check secret-type-check";
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.value = type;
+    input.checked = visibleTypes.has(type);
+    label.appendChild(input);
+    label.appendChild(document.createTextNode(type));
+    container.appendChild(label);
+  });
+}
+
+function collectVisibleSecretTypes() {
+  const checked = Array.from(
+    document.querySelectorAll(
+      '#sb-visible-secret-types input[type="checkbox"]',
+    ),
+  )
+    .filter((input) => input.checked)
+    .map((input) => input.value);
+  return checked.length ? checked : DEFAULT_VISIBLE_SECRET_TYPES;
+}
+
+async function loadAutofillCandidates(forceRefresh) {
+  autofillCandidates = new Map();
+  try {
+    const { extensionSettings } =
+      await chrome.storage.local.get("extensionSettings");
+    const settings = getStoredSettings(extensionSettings);
+    if ((settings.passwordManagerAutofill ?? true) === false) return;
+
+    const response = await chrome.runtime.sendMessage({
+      action: "getPasswordManagerCandidates",
+      forceRefresh: forceRefresh === true,
+    });
+    (response.candidates || []).forEach((candidate) => {
+      if (candidate.path) autofillCandidates.set(candidate.path, candidate);
+    });
   } catch (e) {}
 }
 
@@ -2275,8 +2360,9 @@ async function loadSidebarSettings() {
     s.checkoutExpiryNotification ?? true;
   document.getElementById("sb-auto-checkout-approval").checked =
     s.autoCheckoutOnApproval ?? false;
-  document.getElementById("sb-show-all-types").checked =
-    s.showAllSecretTypes ?? false;
+  document.getElementById("sb-password-manager-autofill").checked =
+    s.passwordManagerAutofill ?? true;
+  await renderVisibleSecretTypeOptions();
   document.getElementById("sb-text-buttons").checked = s.textButtons ?? false;
   document.documentElement.dataset.textButtons = String(s.textButtons ?? false);
   applyTheme(s.theme || "dark");
@@ -2316,7 +2402,11 @@ async function sidebarSaveSettings() {
       autoCheckoutOnApproval: document.getElementById(
         "sb-auto-checkout-approval",
       ).checked,
-      showAllSecretTypes: document.getElementById("sb-show-all-types").checked,
+      passwordManagerAutofill: document.getElementById(
+        "sb-password-manager-autofill",
+      ).checked,
+      visibleSecretTypes: collectVisibleSecretTypes(),
+      showAllSecretTypes: false,
       textButtons: document.getElementById("sb-text-buttons").checked,
     };
 
@@ -2417,7 +2507,9 @@ async function loadSecrets(forceRefresh) {
           ? response.secrets
           : [];
         crtLog("SECRETS", "loaded " + currentSecrets.length + " secrets");
-        displaySecrets(currentSecrets);
+        await loadAutofillCandidates(forceRefresh === true);
+        await renderVisibleSecretTypeOptions();
+        await displaySecrets(currentSecrets);
         updateLastRefreshed();
       }
     } else {
@@ -2448,29 +2540,21 @@ async function displaySecrets(secrets) {
     return;
   }
 
-  // Apply type filtering if templates are loaded and showAllSecretTypes is off
-  let filtered = secrets;
   const storage = await chrome.storage.local.get("extensionSettings");
-  const showAll =
-    (storage.extensionSettings || defaultSettings).showAllSecretTypes ?? false;
-
-  if (
-    !showAll &&
-    secretTemplates &&
-    secretTemplates.webTypes &&
-    secretTemplates.webTypes.length > 0
-  ) {
-    filtered = secrets.filter((s) =>
-      secretTemplates.webTypes.includes(s.secretType),
-    );
-  }
+  const visibleTypes = new Set(
+    getVisibleSecretTypes(
+      getStoredSettings(storage.extensionSettings),
+      secrets,
+    ),
+  );
+  const filtered = secrets.filter((s) => visibleTypes.has(s.secretType));
 
   if (filtered.length === 0) {
     setStateMessage(
       listDiv,
       "empty-state",
-      "No web credential secrets found.",
-      'Enable "Show all secret types" in settings to see all.',
+      "No selected secret types found.",
+      "Choose additional secret types in settings to see more.",
     );
     return;
   }
@@ -2571,6 +2655,37 @@ function createSecretItem(secret, index) {
 
   div.appendChild(name);
   if (secret.path) div.appendChild(path);
+
+  const candidate = autofillCandidates.get(secret.path || "");
+  if (secret.secretType === PASSWORD_MANAGER_SECRET_TYPE && candidate) {
+    const autofillBtn = document.createElement("button");
+    autofillBtn.className = "btn-autofill";
+    autofillBtn.textContent = "Autofill";
+    autofillBtn.title = candidate.username
+      ? `Autofill ${candidate.username}`
+      : "Autofill credentials";
+    autofillBtn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      autofillBtn.disabled = true;
+      try {
+        const result = await chrome.runtime.sendMessage({
+          action: "autofillSecret",
+          path: secret.path,
+          username: candidate.username || "",
+        });
+        if (result?.error || result?.success === false) {
+          showToast(result.error || "Autofill failed", "error");
+        } else {
+          showToast("Credentials autofilled", "success");
+        }
+      } catch (error) {
+        showToast(error.message || "Autofill failed", "error");
+      } finally {
+        autofillBtn.disabled = false;
+      }
+    });
+    div.appendChild(autofillBtn);
+  }
 
   div.addEventListener("click", () => toggleSecretDetails(div, secret));
   return div;

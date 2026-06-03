@@ -4,6 +4,8 @@ const defaultSettings = {
   bannerCheck: true,
   bannerPollInterval: 60,
   showAllSecretTypes: false,
+  visibleSecretTypes: ["Password Manager", "GenericWebApp", "WebApp With OTP"],
+  passwordManagerAutofill: true,
   zoomLevel: 100,
   theme: "dark",
   collectionName: "",
@@ -15,6 +17,13 @@ const defaultSettings = {
   textButtons: false,
   autoCheckoutOnApproval: false,
 };
+
+const PASSWORD_MANAGER_SECRET_TYPE = "Password Manager";
+const DEFAULT_VISIBLE_SECRET_TYPES = [
+  PASSWORD_MANAGER_SECRET_TYPE,
+  "GenericWebApp",
+  "WebApp With OTP",
+];
 
 function getStoredSettings(settings) {
   return { ...defaultSettings, ...(settings || {}) };
@@ -32,6 +41,56 @@ function isValidTenant(t) {
 
 function applyTheme(theme) {
   document.documentElement.classList.toggle("light", theme === "light");
+}
+
+function getVisibleSecretTypes(settings, allTypes) {
+  if (Array.isArray(settings.visibleSecretTypes)) {
+    return settings.visibleSecretTypes.length
+      ? settings.visibleSecretTypes
+      : DEFAULT_VISIBLE_SECRET_TYPES;
+  }
+  return settings.showAllSecretTypes ? allTypes : DEFAULT_VISIBLE_SECRET_TYPES;
+}
+
+async function getKnownSecretTypes() {
+  const types = new Set(DEFAULT_VISIBLE_SECRET_TYPES);
+  try {
+    const response = await chrome.runtime.sendMessage({
+      action: "getSecretTemplates",
+    });
+    (response?.allTypes || []).forEach((type) => {
+      if (type?.secretType) types.add(type.secretType);
+    });
+  } catch (e) {}
+  return Array.from(types).sort((a, b) => a.localeCompare(b));
+}
+
+async function renderVisibleSecretTypeOptions(settings) {
+  const container = document.getElementById("visible-secret-types");
+  if (!container) return;
+  const allTypes = await getKnownSecretTypes();
+  const visibleTypes = new Set(getVisibleSecretTypes(settings, allTypes));
+  container.replaceChildren();
+  allTypes.forEach((type) => {
+    const label = document.createElement("label");
+    label.className = "secret-type-option";
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.value = type;
+    input.checked = visibleTypes.has(type);
+    label.appendChild(input);
+    label.appendChild(document.createTextNode(type));
+    container.appendChild(label);
+  });
+}
+
+function collectVisibleSecretTypes() {
+  const checked = Array.from(
+    document.querySelectorAll('#visible-secret-types input[type="checkbox"]'),
+  )
+    .filter((input) => input.checked)
+    .map((input) => input.value);
+  return checked.length ? checked : DEFAULT_VISIBLE_SECRET_TYPES;
 }
 
 // Apply theme immediately to avoid flash of wrong colors
@@ -195,8 +254,9 @@ async function loadSettings() {
     settings.bannerPollInterval || 60;
   document.getElementById("auto-checkout-on-approval").checked =
     settings.autoCheckoutOnApproval ?? false;
-  document.getElementById("show-all-secret-types").checked =
-    settings.showAllSecretTypes ?? false;
+  document.getElementById("password-manager-autofill").checked =
+    settings.passwordManagerAutofill ?? true;
+  await renderVisibleSecretTypeOptions(settings);
   document.getElementById("text-buttons").checked =
     settings.textButtons ?? false;
 }
@@ -246,8 +306,11 @@ async function saveSettings() {
       autoCheckoutOnApproval: document.getElementById(
         "auto-checkout-on-approval",
       ).checked,
-      showAllSecretTypes: document.getElementById("show-all-secret-types")
-        .checked,
+      passwordManagerAutofill: document.getElementById(
+        "password-manager-autofill",
+      ).checked,
+      visibleSecretTypes: collectVisibleSecretTypes(),
+      showAllSecretTypes: false,
       textButtons: document.getElementById("text-buttons").checked,
     };
 

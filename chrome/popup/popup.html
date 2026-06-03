@@ -230,11 +230,23 @@
           <section class="sidebar-section">
             <h3>Password Manager</h3>
             <label class="sidebar-check">
-              <input type="checkbox" id="sb-show-all-types" />
-              Show all secret types
+              <input
+                type="checkbox"
+                id="sb-password-manager-autofill"
+                checked
+              />
+              Enable auto-fill
             </label>
             <p class="sidebar-help">
-              When off, only web credential secrets are shown
+              Show Autofill actions for matching Password Manager secrets.
+            </p>
+          </section>
+
+          <section class="sidebar-section">
+            <h3>Secrets</h3>
+            <div id="sb-visible-secret-types" class="secret-type-options"></div>
+            <p class="sidebar-help">
+              Select which secret types to display in My Secrets.
             </p>
           </section>
 

@@ -1,5 +1,40 @@
 # Change Log
 
+## v1.2.0 [2026-06-01]
+
+__What's New:__
+
+* Password Manager secrets can now be matched to the active site and autofilled on demand.
+* Password Manager credentials can now be offered directly on login pages with a Britive inline autofill prompt.
+* New pending approval requests can now generate native browser notifications for approvers.
+* Notification delivery now uses the Britive WebSocket v2 endpoint with a periodic keepalive ping.
+
+__Enhancements:__
+
+* Password Manager autofill settings are now separate from My Secrets visible type settings.
+* My Secrets defaults to Password Manager, Generic Web App, and Web App With OTP secret types.
+* Password Manager autofill matches exact hostnames first and supports stored parent domains for active subdomains.
+* Autofill can fill username, password, and OTP values when present in the selected Password Manager secret.
+* The best Password Manager match can be autofilled from the keyboard with Ctrl+Shift+L, or Command+Shift+L on macOS.
+* Checkout expiration notifications are restored more reliably after browser wake or background restart.
+* My Access WebSocket notifications, popup toasts, and badge counts remain scoped to the current Favorites or selected collection.
+* My Approvals remain unscoped so approvers see and receive notifications for all pending approvals.
+
+__Bug Fixes:__
+
+* Expired queued checkout notifications no longer keep stale badge counts or delayed popup toasts.
+* Checkout expiration metadata is reconciled when profiles are no longer checked out.
+* Password Manager autofill prompt rendering now avoids injecting secret metadata through HTML strings.
+
+__Dependencies:__
+
+* None
+
+__Other:__
+
+* Chrome adds the autofill permissions required for active-tab script execution, context menu access, and inline login-page credential offering.
+* Firefox retains CLI auth tab auto-close support; Chrome continues to avoid the Web Store-rejected tabs permission.
+
 ## v1.1.0 [2026-05-01]
 
 __What's New:__

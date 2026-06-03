@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Britive",
-  "version": "1.1.0",
-  "version_name": "1.1.0",
+  "version": "1.2.0",
+  "version_name": "1.2.0",
   "description": "Britive extension for My Access, My Approvals, and My Secrets.",
   "icons": {
     "48": "icons/britive-icon-48.png",
@@ -11,20 +11,37 @@
   },
   "permissions": [
     "identity",
+    "activeTab",
+    "contextMenus",
     "storage",
     "notifications",
     "clipboardWrite",
+    "scripting",
     "alarms",
     "declarativeNetRequest",
     "offscreen",
     "cookies"
   ],
   "host_permissions": [
+    "http://*/*",
+    "https://*/*",
     "https://*.britive-app.com/*"
   ],
   "background": {
     "service_worker": "background.js"
   },
+  "content_scripts": [
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "autofill-prompt.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
   "action": {
     "default_icon": {
       "48": "icons/britive-icon-48.png",
@@ -40,6 +57,17 @@
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self'"
   },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "icons/britive-icon-48.png"
+      ],
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ]
+    }
+  ],
   "commands": {
     "open-access-search": {
       "suggested_key": {
@@ -61,6 +89,13 @@
         "mac": "Command+Shift+Period"
       },
       "description": "Open Britive extension and focus secrets search"
+    },
+    "autofill-password-manager": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+L",
+        "mac": "Command+Shift+L"
+      },
+      "description": "Autofill the best Britive match for the current page"
     }
   }
 }

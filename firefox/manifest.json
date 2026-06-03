@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "Britive",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Britive extension for My Access, My Approvals, and My Secrets.",
   "browser_specific_settings": {
     "gecko": {
@@ -22,6 +22,8 @@
   },
   "permissions": [
     "identity",
+    "activeTab",
+    "menus",
     "storage",
     "tabs",
     "notifications",
@@ -30,6 +32,8 @@
     "webRequestBlocking",
     "cookies",
     "contextualIdentities",
+    "http://*/*",
+    "https://*/*",
     "https://*.britive-app.com/*",
     "https://signin.aws.amazon.com/*",
     "https://*.awsapps.com/*"
@@ -57,6 +61,16 @@
   "content_scripts": [
     {
       "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "autofill-prompt.js"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
         "https://*.britive-app.com/cli*"
       ],
       "js": [
@@ -66,6 +80,7 @@
     }
   ],
   "web_accessible_resources": [
+    "icons/britive-icon-48.png",
     "picker/picker.html"
   ],
   "content_security_policy": "script-src 'self'; object-src 'self'",
@@ -90,6 +105,13 @@
         "mac": "Command+Shift+Period"
       },
       "description": "Open Britive extension and focus secrets search"
+    },
+    "autofill-password-manager": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+L",
+        "mac": "Command+Shift+L"
+      },
+      "description": "Autofill the best Britive match for the current page"
     }
   }
 }

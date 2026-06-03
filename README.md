@@ -23,6 +23,7 @@ View and act on pending approval requests.
 - Approve or reject with an optional comment
 - Pending counts are shown on the extension badge
 - Realtime updates are delivered over WebSocket
+- New pending approval requests can generate native browser notifications
 
 ### My Secrets
 
@@ -31,19 +32,31 @@ Browse secrets from your Britive vault.
 - Secret metadata is listed in the extension
 - Secret values are fetched only when explicitly opened
 - Individual fields can be copied on demand
-- Web credential filtering by default, adjust with "Show all secret types" setting
+- Visible secret types are configurable and default to Password Manager, Generic Web App, and Web App With OTP
+
+### Password Manager Autofill
+
+Fill matching Password Manager secrets into web login forms from the popup, context menu, keyboard shortcut, or inline page prompt.
+
+- Matching uses Password Manager secret metadata and does not decrypt a secret until you explicitly choose to autofill or expand it
+- Exact host matches are preferred, and stored parent domains can match active subdomains
+- Username, password, and OTP fields can be filled when present in the selected secret
+- Inline login-page suggestions use the Britive prompt and icon
 
 ### Notifications
 
 - Tenant banner notifications are polled from `GET /api/banner`
-- Approval and checkout/checkin lifecycle events are delivered in realtime over WebSocket
+- Approval and checkout/checkin lifecycle events are delivered in realtime over WebSocket v2 with a keepalive ping
 - If the popup is closed, supported events are queued and shown when the popup is reopened
+- My Access notifications, popup toasts, and badge counts are scoped to the current Favorites or selected collection
+- My Approvals remain unscoped so approvers see all pending approval work
 
 ### Keyboard Shortcuts
 
 - Open popup + focus Access search: `Ctrl+Shift+K` (`Cmd+Shift+K` on Mac)
 - Open popup + Approvals tab: `Ctrl+Shift+Comma` (`Cmd+Shift+Comma` on Mac)
 - Open popup + focus Secrets search: `Ctrl+Shift+Period` (`Cmd+Shift+Period` on Mac)
+- Autofill the best Password Manager match for current page: `Ctrl+Shift+L` (`Cmd+Shift+L` on Mac)
 
 ### URL Interception (Firefox only)
 
@@ -81,6 +94,8 @@ chrome/    Chrome extension (Manifest V3)
 firefox/
   manifest.json
   background.js   # OAuth, API, WebSocket, notifications, secrets, approvals
+  autofill.js      # injected Password Manager autofill logic
+  autofill-prompt.js # inline Password Manager autofill prompt
   popup/          # popup UI
   options/        # standalone settings page
   picker/         # Firefox-only container picker
@@ -89,6 +104,8 @@ firefox/
 chrome/
   manifest.json
   background.js   # service worker: OAuth, API, alarms, WS coordination
+  autofill.js      # injected Password Manager autofill logic
+  autofill-prompt.js # inline Password Manager autofill prompt
   offscreen.js    # long-lived WebSocket client for MV3
   offscreen.html
   popup/          # popup UI
@@ -121,7 +138,8 @@ Configurable via the popup sidebar or the standalone options page:
 - Additional collection merge for My Access
 - Checkout expiry notification
 - Auto-checkout after approval
-- Show all secret types
+- Password Manager auto-fill
+- Visible secret types
 - Britive issued AWS STS interception (Firefox only)
 - Custom URL interception patterns (Firefox only)
 
