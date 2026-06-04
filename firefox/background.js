@@ -64,11 +64,11 @@ function getTenantBaseUrl(tenant) {
 }
 
 function getWsCookieUrlForTenant(tenant) {
-  return `${getTenantBaseUrl(tenant)}/api/websocket/`;
+  return `${getTenantBaseUrl(tenant)}/api/websocket/v2`;
 }
 
 function getWsCookieUrlForBaseUrl(baseUrl) {
-  return baseUrl ? `${baseUrl}/api/websocket/` : null;
+  return baseUrl ? `${baseUrl}/api/websocket/v2` : null;
 }
 
 function getTenantHostFromBaseUrl(baseUrl) {
@@ -1653,7 +1653,7 @@ async function refreshAccessToken(
           url: wsCookieUrl,
           name: "auth",
           value: newAccessToken,
-          path: "/api/websocket/",
+          path: "/api/websocket/v2",
           secure: true,
           httpOnly: true,
           sameSite: "no_restriction",
@@ -3364,13 +3364,13 @@ async function connectNotificationSocket() {
 
   const tenant = getTenantHostFromBaseUrl(britiveAPI.baseUrl);
 
-  // Set the auth cookie scoped to /api/websocket/ so the v2 WS upgrade carries it.
+  // Set the auth cookie scoped to /api/websocket/v2.
   try {
     await browser.cookies.set({
       url: getWsCookieUrlForBaseUrl(britiveAPI.baseUrl),
       name: "auth",
       value: britiveAPI.bearerToken,
-      path: "/api/websocket/",
+      path: "/api/websocket/v2",
       secure: true,
       httpOnly: true,
       sameSite: "no_restriction",
@@ -3430,8 +3430,9 @@ function disconnectNotificationSocket() {
   // Clean up the scoped auth cookie
   browser.cookies
     .remove({
-      url: britiveAPI.baseUrl || "https://placeholder.britive-app.com",
+      url: getWsCookieUrlForBaseUrl(britiveAPI.baseUrl) || "https://placeholder.britive-app.com/api/websocket/v2",
       name: "auth",
+      path: "/api/websocket/v2",
     })
     .catch(() => {});
 }
