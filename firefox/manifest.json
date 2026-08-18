@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "Britive",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Britive extension for My Access, My Approvals, and My Secrets.",
   "browser_specific_settings": {
     "gecko": {

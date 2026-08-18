@@ -63,12 +63,14 @@ function getTenantBaseUrl(tenant) {
   return `https://${tenant}.britive-app.com`;
 }
 
+const WS_COOKIE_PATH = "/api/websocket/";
+
 function getWsCookieUrlForTenant(tenant) {
-  return `${getTenantBaseUrl(tenant)}/api/websocket/`;
+  return `${getTenantBaseUrl(tenant)}${WS_COOKIE_PATH}`;
 }
 
 function getWsCookieUrlForBaseUrl(baseUrl) {
-  return baseUrl ? `${baseUrl}/api/websocket/` : null;
+  return baseUrl ? `${baseUrl}${WS_COOKIE_PATH}` : null;
 }
 
 function getTenantHostFromBaseUrl(baseUrl) {
@@ -201,6 +203,10 @@ class BritiveAPI {
   }
 
   async makeRequest(endpoint, options = {}) {
+    const {
+      preserveSessionOnUnauthorized = false,
+      ...requestOptions
+    } = options;
     if (!this.baseUrl || !this.bearerToken) {
       await this.initialize();
     }
@@ -218,13 +224,13 @@ class BritiveAPI {
 
     // Use Bearer token in Authorization header (like Python SDK)
     const response = await fetch(url, {
-      ...options,
-      credentials: "omit",
+      ...requestOptions,
+      credentials: requestOptions.credentials || "omit",
       headers: {
         Authorization: `Bearer ${this.bearerToken}`,
         "Content-Type": "application/json",
         "X-Britive-Extension": extVersion,
-        ...options.headers,
+        ...requestOptions.headers,
       },
     });
 
@@ -251,6 +257,9 @@ class BritiveAPI {
       }
 
       if (response.status === 401) {
+        if (preserveSessionOnUnauthorized) {
+          throw new Error(`API Error: ${response.status} - ${errorText}`);
+        }
         await this.clearToken();
         throw new Error("Not authenticated. Please log in to Britive again.");
       }
@@ -505,13 +514,46 @@ function matchPattern(url, pattern) {
 browser.webRequest.onBeforeSendHeaders.addListener(
   (details) => {
     const extVersion = browser.runtime.getManifest().version;
-    for (const header of details.requestHeaders) {
+    const requestHeaders = details.requestHeaders || [];
+    const isExtensionRequest = requestHeaders.some(
+      (header) => header.name.toLowerCase() === "x-britive-extension",
+    );
+    const hasBearerToken = requestHeaders.some(
+      (header) =>
+        header.name.toLowerCase() === "authorization" &&
+        header.value?.startsWith("Bearer "),
+    );
+
+    if (isExtensionRequest && hasBearerToken) {
+      for (let index = requestHeaders.length - 1; index >= 0; index--) {
+        const header = requestHeaders[index];
+        if (header.name.toLowerCase() !== "cookie") continue;
+
+        const cookies = (header.value || "")
+          .split(";")
+          .map((cookie) => cookie.trim())
+          .filter(Boolean)
+          .filter((cookie) => {
+            const separator = cookie.indexOf("=");
+            const name = separator === -1 ? cookie : cookie.slice(0, separator);
+            return name.trim().toLowerCase() !== "auth";
+          });
+
+        if (cookies.length) {
+          header.value = cookies.join("; ");
+        } else {
+          requestHeaders.splice(index, 1);
+        }
+      }
+    }
+
+    for (const header of requestHeaders) {
       if (header.name.toLowerCase() === "user-agent") {
         header.value += ` browser-extension-${extVersion}`;
         break;
       }
     }
-    return { requestHeaders: details.requestHeaders };
+    return { requestHeaders };
   },
   { urls: ["*://*.britive-app.com/*"] },
   ["blocking", "requestHeaders"],
@@ -569,10 +611,12 @@ async function getCachedSecretTemplates() {
 
 // ── Secrets cache ──
 const CACHE_MAX_AGE_MS = 60 * 60 * 1000; // 1 hour
+const SECRETS_CACHE_VERSION = 2;
 
 async function getCachedSecrets() {
   const { secretsCache } = await browser.storage.local.get("secretsCache");
   if (!secretsCache) return null;
+  if (secretsCache.version !== SECRETS_CACHE_VERSION) return null;
   const age = Date.now() - (secretsCache.timestamp || 0);
   if (age > CACHE_MAX_AGE_MS) return null; // stale
   return secretsCache.secrets;
@@ -580,7 +624,11 @@ async function getCachedSecrets() {
 
 async function setCachedSecrets(secrets) {
   await browser.storage.local.set({
-    secretsCache: { secrets, timestamp: Date.now() },
+    secretsCache: {
+      version: SECRETS_CACHE_VERSION,
+      secrets,
+      timestamp: Date.now(),
+    },
   });
 }
 
@@ -1653,7 +1701,7 @@ async function refreshAccessToken(
           url: wsCookieUrl,
           name: "auth",
           value: newAccessToken,
-          path: "/api/websocket/",
+          path: WS_COOKIE_PATH,
           secure: true,
           httpOnly: true,
           sameSite: "no_restriction",
@@ -1800,23 +1848,45 @@ async function fetchBritiveSecrets() {
 
     const vaultId = await britiveAPI.getVaultId();
 
-    const params = new URLSearchParams({
-      path: "/",
-      recursiveSecrets: "true",
-      getmetadata: "true",
-    });
+    const endpoint = `/api/v1/secretmanager/vault/${vaultId}/secrets`;
+    const allSecrets = [];
+    const seenPageTokens = new Set();
+    let pageToken = "";
 
-    const response = await britiveAPI.makeRequest(
-      `/api/v1/secretmanager/vault/${vaultId}/secrets?${params.toString()}`,
-    );
+    do {
+      const params = new URLSearchParams({
+        path: "/",
+        recursiveSecrets: "true",
+        getmetadata: "true",
+      });
+      if (pageToken) params.set("pageToken", pageToken);
 
-    // API returns { result: [...], pagination: {...} }
-    if (Array.isArray(response)) return response;
-    if (response.result && Array.isArray(response.result))
-      return response.result;
-    if (response.data && Array.isArray(response.data)) return response.data;
+      const response = await britiveAPI.makeRequest(
+        `${endpoint}?${params.toString()}`,
+      );
+      if (Array.isArray(response)) return allSecrets.concat(response);
 
-    return [];
+      const pageItems = Array.isArray(response?.result)
+        ? response.result
+        : Array.isArray(response?.data)
+          ? response.data
+          : null;
+      if (!pageItems) throw new Error("Invalid secrets response");
+      allSecrets.push(...pageItems);
+
+      const next = response?.pagination?.next || "";
+      if (!next) break;
+      const nextToken = new URL(next, britiveAPI.baseUrl).searchParams.get(
+        "pageToken",
+      );
+      if (!nextToken || seenPageTokens.has(nextToken)) {
+        throw new Error("Invalid secrets pagination token");
+      }
+      seenPageTokens.add(nextToken);
+      pageToken = nextToken;
+    } while (pageToken);
+
+    return allSecrets;
   } catch (error) {
     return { error: normalizeError(error) };
   }
@@ -2630,11 +2700,22 @@ async function checkoutAccess(
     // Step-up auth (OTP) must be validated before the checkout POST
     if (otp) {
       try {
-        await britiveAPI.makeRequest("/api/step-up/authenticate/TOTP", {
-          method: "POST",
-          body: JSON.stringify({ otp }),
-        });
+        const authResponse = await britiveAPI.makeRequest(
+          "/api/step-up/authenticate/TOTP",
+          {
+            method: "POST",
+            credentials: "include",
+            preserveSessionOnUnauthorized: true,
+            body: JSON.stringify({ otp }),
+          },
+        );
+        if (String(authResponse?.result).toUpperCase() !== "SUCCEEDED") {
+          return {
+            error: "Step-up authentication failed. Check your OTP and try again.",
+          };
+        }
       } catch (authErr) {
+        await reportError("stepUpAuthentication", authErr);
         return {
           error: "Step-up authentication failed. Check your OTP and try again.",
         };
@@ -2648,7 +2729,11 @@ async function checkoutAccess(
 
     const response = await britiveAPI.makeRequest(
       `/api/access/${safePath(papId)}/environments/${safePath(environmentId)}?accessType=CONSOLE`,
-      { method: "POST", body: JSON.stringify(body) },
+      {
+        method: "POST",
+        credentials: otp ? "include" : "omit",
+        body: JSON.stringify(body),
+      },
     );
     // Invalidate cache after checkout
     accessCache = null;
@@ -3370,7 +3455,7 @@ async function connectNotificationSocket() {
       url: getWsCookieUrlForBaseUrl(britiveAPI.baseUrl),
       name: "auth",
       value: britiveAPI.bearerToken,
-      path: "/api/websocket/",
+      path: WS_COOKIE_PATH,
       secure: true,
       httpOnly: true,
       sameSite: "no_restriction",
@@ -3412,7 +3497,7 @@ async function connectNotificationSocket() {
   };
 }
 
-function disconnectNotificationSocket() {
+async function disconnectNotificationSocket() {
   if (wsReconnectTimer) {
     clearTimeout(wsReconnectTimer);
     wsReconnectTimer = null;
@@ -3427,13 +3512,22 @@ function disconnectNotificationSocket() {
     }
     notificationSocket = null;
   }
-  // Clean up the scoped auth cookie
-  browser.cookies
-    .remove({
-      url: britiveAPI.baseUrl || "https://placeholder.britive-app.com",
+  await removeWsAuthCookie(britiveAPI.baseUrl);
+}
+
+async function removeWsAuthCookie(baseUrl) {
+  const url = getWsCookieUrlForBaseUrl(baseUrl);
+  if (!url) return;
+  try {
+    const cookies = await browser.cookies.getAll({ url, name: "auth" });
+    const cookie = cookies.find((item) => item.path === WS_COOKIE_PATH);
+    if (!cookie) return;
+    await browser.cookies.remove({
+      url,
       name: "auth",
-    })
-    .catch(() => {});
+      storeId: cookie.storeId,
+    });
+  } catch (e) {}
 }
 
 function cleanupSocketTimers() {

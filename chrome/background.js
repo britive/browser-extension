@@ -62,12 +62,14 @@ function getTenantBaseUrl(tenant) {
   return `https://${tenant}.britive-app.com`;
 }
 
+const WS_COOKIE_PATH = "/api/websocket/";
+
 function getWsCookieUrlForTenant(tenant) {
-  return `${getTenantBaseUrl(tenant)}/api/websocket/`;
+  return `${getTenantBaseUrl(tenant)}${WS_COOKIE_PATH}`;
 }
 
 function getWsCookieUrlForBaseUrl(baseUrl) {
-  return baseUrl ? `${baseUrl}/api/websocket/` : null;
+  return baseUrl ? `${baseUrl}${WS_COOKIE_PATH}` : null;
 }
 
 function getTenantHostFromBaseUrl(baseUrl) {
@@ -313,10 +315,12 @@ chrome.declarativeNetRequest.updateDynamicRules({
 // ── Secrets cache ──
 
 const CACHE_MAX_AGE_MS = 60 * 60 * 1000; // 1 hour
+const SECRETS_CACHE_VERSION = 2;
 
 async function getCachedSecrets() {
   const { secretsCache } = await chrome.storage.local.get("secretsCache");
   if (!secretsCache) return null;
+  if (secretsCache.version !== SECRETS_CACHE_VERSION) return null;
   const age = Date.now() - (secretsCache.timestamp || 0);
   if (age > CACHE_MAX_AGE_MS) return null;
   return secretsCache.secrets;
@@ -324,7 +328,11 @@ async function getCachedSecrets() {
 
 async function setCachedSecrets(secrets) {
   await chrome.storage.local.set({
-    secretsCache: { secrets, timestamp: Date.now() },
+    secretsCache: {
+      version: SECRETS_CACHE_VERSION,
+      secrets,
+      timestamp: Date.now(),
+    },
   });
 }
 
@@ -1301,7 +1309,7 @@ async function refreshAccessToken() {
         url: wsCookieUrl,
         name: "auth",
         value: newAccessToken,
-        path: "/api/websocket/",
+        path: WS_COOKIE_PATH,
         secure: true,
         httpOnly: true,
         sameSite: "no_restriction",
@@ -1409,22 +1417,45 @@ async function fetchBritiveSecrets() {
 
     const vaultId = await britiveAPI.getVaultId();
 
-    const params = new URLSearchParams({
-      path: "/",
-      recursiveSecrets: "true",
-      getmetadata: "true",
-    });
+    const endpoint = `/api/v1/secretmanager/vault/${vaultId}/secrets`;
+    const allSecrets = [];
+    const seenPageTokens = new Set();
+    let pageToken = "";
 
-    const response = await britiveAPI.makeRequest(
-      `/api/v1/secretmanager/vault/${vaultId}/secrets?${params.toString()}`,
-    );
+    do {
+      const params = new URLSearchParams({
+        path: "/",
+        recursiveSecrets: "true",
+        getmetadata: "true",
+      });
+      if (pageToken) params.set("pageToken", pageToken);
 
-    if (Array.isArray(response)) return response;
-    if (response.result && Array.isArray(response.result))
-      return response.result;
-    if (response.data && Array.isArray(response.data)) return response.data;
+      const response = await britiveAPI.makeRequest(
+        `${endpoint}?${params.toString()}`,
+      );
+      if (Array.isArray(response)) return allSecrets.concat(response);
 
-    return [];
+      const pageItems = Array.isArray(response?.result)
+        ? response.result
+        : Array.isArray(response?.data)
+          ? response.data
+          : null;
+      if (!pageItems) throw new Error("Invalid secrets response");
+      allSecrets.push(...pageItems);
+
+      const next = response?.pagination?.next || "";
+      if (!next) break;
+      const nextToken = new URL(next, britiveAPI.baseUrl).searchParams.get(
+        "pageToken",
+      );
+      if (!nextToken || seenPageTokens.has(nextToken)) {
+        throw new Error("Invalid secrets pagination token");
+      }
+      seenPageTokens.add(nextToken);
+      pageToken = nextToken;
+    } while (pageToken);
+
+    return allSecrets;
   } catch (error) {
     return { error: normalizeError(error) };
   }
@@ -2240,10 +2271,19 @@ async function checkoutAccess(
     // Step-up auth (OTP) must be validated before the checkout POST
     if (otp) {
       try {
-        await britiveAPI.makeRequest("/api/step-up/authenticate/TOTP", {
-          method: "POST",
-          body: JSON.stringify({ otp }),
-        });
+        const authResponse = await britiveAPI.makeRequest(
+          "/api/step-up/authenticate/TOTP",
+          {
+            method: "POST",
+            credentials: "include",
+            body: JSON.stringify({ otp }),
+          },
+        );
+        if (String(authResponse?.result).toUpperCase() !== "SUCCEEDED") {
+          return {
+            error: "Step-up authentication failed. Check your OTP and try again.",
+          };
+        }
       } catch (authErr) {
         return {
           error: "Step-up authentication failed. Check your OTP and try again.",
@@ -2258,7 +2298,11 @@ async function checkoutAccess(
 
     const response = await britiveAPI.makeRequest(
       `/api/access/${safePath(papId)}/environments/${safePath(environmentId)}?accessType=CONSOLE`,
-      { method: "POST", body: JSON.stringify(body) },
+      {
+        method: "POST",
+        credentials: otp ? "include" : "omit",
+        body: JSON.stringify(body),
+      },
     );
     // Invalidate cache after checkout
     accessCache = null;
@@ -2931,7 +2975,7 @@ async function connectNotificationSocket() {
       url: getWsCookieUrlForBaseUrl(britiveAPI.baseUrl),
       name: "auth",
       value: britiveAPI.bearerToken,
-      path: "/api/websocket/",
+      path: WS_COOKIE_PATH,
       secure: true,
       httpOnly: true,
       sameSite: "no_restriction",
@@ -2963,16 +3007,24 @@ async function disconnectNotificationSocket() {
     chrome.offscreen.closeDocument().catch(() => {}),
   ];
   if (britiveAPI.baseUrl) {
-    closeTasks.push(
-      chrome.cookies
-        .remove({
-          url: getWsCookieUrlForBaseUrl(britiveAPI.baseUrl),
-          name: "auth",
-        })
-        .catch(() => {}),
-    );
+    closeTasks.push(removeWsAuthCookie(britiveAPI.baseUrl));
   }
   await Promise.all(closeTasks);
+}
+
+async function removeWsAuthCookie(baseUrl) {
+  const url = getWsCookieUrlForBaseUrl(baseUrl);
+  if (!url) return;
+  try {
+    const cookies = await chrome.cookies.getAll({ url, name: "auth" });
+    const cookie = cookies.find((item) => item.path === WS_COOKIE_PATH);
+    if (!cookie) return;
+    await chrome.cookies.remove({
+      url,
+      name: "auth",
+      storeId: cookie.storeId,
+    });
+  } catch (e) {}
 }
 
 function handleSocketEvent(eventName, payload) {

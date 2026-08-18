@@ -1,5 +1,29 @@
 # Change Log
 
+## v1.2.1 [2026-08-18]
+
+__What's New:__
+
+* None
+
+__Enhancements:__
+
+* None
+
+__Bug Fixes:__
+
+* Extension logout now removes only the WebSocket-scoped authentication cookie, preserving the separate Britive web UI session.
+* My Secrets now follows cursor pagination so users can see secrets beyond the first API response page.
+* Step-up TOTP checkout now retains the completion cookie, keeps the extension session active after a failed OTP, and applies successful authentication to the checkout retry.
+
+__Dependencies:__
+
+* None
+
+__Other:__
+
+* None
+
 ## v1.2.0 [2026-06-01]
 
 __What's New:__

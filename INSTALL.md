@@ -53,14 +53,14 @@ If you prefer to build manually or cannot run the script:
 
 ```sh
 cd firefox
-zip -r ../dist/firefox-extension-1.2.0.xpi .
+zip -r ../dist/firefox-extension-1.2.1.xpi .
 ```
 
 **Chrome:**
 
 ```sh
 cd chrome
-zip -r ../dist/chrome-extension-1.2.0.zip .
+zip -r ../dist/chrome-extension-1.2.1.zip .
 ```
 
 ### Verifying the Build
@@ -70,8 +70,8 @@ The packaged archives should contain only the files present in the `firefox/` or
 To inspect an archive's contents:
 
 ```sh
-unzip -l dist/firefox-extension-1.2.0.xpi
-unzip -l dist/chrome-extension-1.2.0.zip
+unzip -l dist/firefox-extension-1.2.1.xpi
+unzip -l dist/chrome-extension-1.2.1.zip
 ```
 
 ---
