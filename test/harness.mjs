@@ -19,7 +19,7 @@ const HOUR = 60 * 60 * 1000;
 
 // ── Clock ──
 
-function createClock(start) {
+export function createClock(start) {
   let now = start;
   let nextId = 1;
   const timers = new Map(); // id -> { due, fn, args, interval }

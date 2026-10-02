@@ -115,23 +115,35 @@ chrome/
 test/
   harness.mjs     # loads a build's background.js against a fake browser API,
                   # fake Britive tenant, and virtual clock
-  *.test.mjs      # tests; each one runs against both builds
+  dom.mjs         # loads popup/options/picker pages and content scripts into
+                  # jsdom, with the background faked per test
+  *.test.mjs      # tests; each runs against both builds where the code exists
 ```
 
 ## Running Tests
 
-Requires Node.js 20 or newer. There are no dependencies to install.
+Requires Node.js 20 or newer.
 
 ```bash
+npm install
 npm test
 ```
 
-The tests load each build's `background.js` into an isolated VM context with
-a fake WebExtension API, a fake Britive tenant behind `fetch()`, and a
-virtual clock. The clock can model a laptop sleep (`env.sleep(ms)`): wall-clock
-time jumps forward while pending timers are delayed by the same amount, which
-is how the browser behaves across sleep. `test/` and `package.json` are not
-included in the packaged extension.
+There are two harnesses:
+
+- **Background** (`test/harness.mjs`): loads each build's `background.js` into
+  an isolated VM context with a fake WebExtension API, a fake Britive tenant
+  behind `fetch()`, and a virtual clock. The clock can model a laptop sleep
+  (`env.sleep(ms)`): wall-clock time jumps forward while pending timers are
+  delayed by the same amount, which is how the browser behaves across sleep.
+- **Pages and content scripts** (`test/dom.mjs`): loads the popup, options,
+  picker, and offscreen pages from their real HTML, or a content script into a
+  sample web page, using [jsdom](https://github.com/jsdom/jsdom). Each
+  `runtime.sendMessage({ action })` is answered by a per-test fake background
+  and recorded, so tests can assert exactly what the UI asked for.
+
+`jsdom` is a development dependency only. `test/`, `package.json`, and
+`node_modules/` are not included in the packaged extension.
 
 ## Firefox vs Chrome
 
