@@ -1,5 +1,31 @@
 # Change Log
 
+## v1.2.2 [2026-10-02]
+
+__What's New:__
+
+* None
+
+__Enhancements:__
+
+* None
+
+__Bug Fixes:__
+
+* The extension no longer logs users out after the computer sleeps past the access token's expiry. It now checks token expiry before each request and refreshes first, instead of relying on a timer that doesn't run during sleep.
+* A 401 from the Britive API now triggers one token refresh and retry before the session is cleared, so an expired access token no longer discards a still-valid refresh token.
+* Concurrent requests share a single token refresh, so polls firing together on wake can't race each other into a logout.
+* Server errors and throttling (5xx, 408, 429) from the token endpoint are retried instead of logging the user out.
+* Chrome: a rejected step-up OTP no longer logs the user out and is not resent.
+
+__Dependencies:__
+
+* None
+
+__Other:__
+
+* Added an automated test suite (`npm test`) covering the background scripts, popup, options page, autofill, container picker, CLI page script, and offscreen WebSocket client for both builds, with a GitHub Actions workflow. `jsdom` is a development-only dependency and is not included in the packaged extension.
+
 ## v1.2.1 [2026-08-18]
 
 __What's New:__
