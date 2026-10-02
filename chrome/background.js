@@ -160,6 +160,11 @@ class BritiveAPI {
   }
 
   async makeRequest(endpoint, options = {}) {
+    const {
+      preserveSessionOnUnauthorized = false,
+      isRetryAfterRefresh = false,
+      ...requestOptions
+    } = options;
     await this.ensureInitialized();
 
     if (!this.baseUrl) {
@@ -170,16 +175,22 @@ class BritiveAPI {
       throw new Error("Not authenticated. Please log in to Britive.");
     }
 
+    await this.refreshIfExpiring();
+    if (!this.bearerToken) {
+      throw new Error("Not authenticated. Please log in to Britive again.");
+    }
+
     const url = `${this.baseUrl}${endpoint}`;
     const extVersion = chrome.runtime.getManifest().version;
+    const tokenUsed = this.bearerToken;
 
     const response = await fetch(url, {
-      ...options,
+      ...requestOptions,
       headers: {
-        Authorization: `Bearer ${this.bearerToken}`,
+        Authorization: `Bearer ${tokenUsed}`,
         "Content-Type": "application/json",
         "X-Britive-Extension": extVersion,
-        ...options.headers,
+        ...requestOptions.headers,
       },
     });
 
@@ -206,7 +217,26 @@ class BritiveAPI {
       }
 
       if (response.status === 401) {
-        await this.clearToken();
+        if (preserveSessionOnUnauthorized) {
+          throw new Error(`API Error: ${response.status} - ${errorText}`);
+        }
+        // An expired access token is recoverable while the refresh token is
+        // valid, so refresh and retry once before treating this as a logout.
+        if (
+          !isRetryAfterRefresh &&
+          (await this.recoverFromUnauthorized(tokenUsed))
+        ) {
+          return this.makeRequest(endpoint, {
+            ...options,
+            isRetryAfterRefresh: true,
+          });
+        }
+        // A fresh token being rejected, or no refresh token left, means the
+        // session is really gone. A transient refresh failure keeps the
+        // session; refreshAccessToken has already scheduled a retry.
+        if (isRetryAfterRefresh || !(await hasStoredRefreshToken())) {
+          await this.clearToken();
+        }
         throw new Error("Not authenticated. Please log in to Britive again.");
       }
 
@@ -219,6 +249,27 @@ class BritiveAPI {
     }
 
     return response.text();
+  }
+
+  // The refresh alarm can fire late (sleep, suspended service worker), so
+  // check the wall clock before every request instead of relying on it.
+  async refreshIfExpiring() {
+    const { britiveSettings } =
+      await chrome.storage.local.get("britiveSettings");
+    if (!britiveSettings?.refreshToken || !britiveSettings.expirationTime) {
+      return;
+    }
+    const refreshAt =
+      britiveSettings.expirationTime - TOKEN_REFRESH_LEAD_TIME_MS;
+    if (Date.now() < refreshAt) return;
+    await refreshAccessToken();
+  }
+
+  async recoverFromUnauthorized(tokenUsed) {
+    // Another request may already have refreshed while this one was in flight.
+    if (this.bearerToken && this.bearerToken !== tokenUsed) return true;
+    await refreshAccessToken({ force: true });
+    return Boolean(this.bearerToken && this.bearerToken !== tokenUsed);
   }
 
   async clearToken() {
@@ -1172,7 +1223,19 @@ async function exchangeCodeForTokens(
 
 // ---- Token Refresh (alarm-based for MV3 service worker) ----
 
-let refreshInProgress = false;
+let refreshPromise = null;
+
+// HTTP statuses from the token endpoint that don't prove the refresh token is
+// bad (gateway errors, throttling); retry these instead of logging out.
+function isTransientRefreshStatus(status) {
+  return status >= 500 || status === 408 || status === 429;
+}
+
+async function hasStoredRefreshToken() {
+  const { britiveSettings } =
+    await chrome.storage.local.get("britiveSettings");
+  return Boolean(britiveSettings?.refreshToken);
+}
 
 function getPostLoginRefreshCooldownRemaining(settings) {
   const loginTimestamp = settings?.loginTimestamp || 0;
@@ -1199,12 +1262,20 @@ function scheduleTokenRefreshAlarm(expirationTime) {
   chrome.alarms.create("britive-token-refresh", { delayInMinutes: delayMin });
 }
 
-async function refreshAccessToken() {
-  try {
-    if (refreshInProgress) {
-      return false;
-    }
+// Single-flight: concurrent callers (pollers, popup, 401 recovery) share one
+// token request instead of racing each other into a logout. `force` skips the
+// not-yet-due check, for when the server already rejected the access token.
+function refreshAccessToken({ force = false } = {}) {
+  if (!refreshPromise) {
+    refreshPromise = performTokenRefresh(force).finally(() => {
+      refreshPromise = null;
+    });
+  }
+  return refreshPromise;
+}
 
+async function performTokenRefresh(force) {
+  try {
     const { britiveSettings } =
       await chrome.storage.local.get("britiveSettings");
     if (
@@ -1223,7 +1294,7 @@ async function refreshAccessToken() {
       );
     }
 
-    if (britiveSettings.expirationTime) {
+    if (!force && britiveSettings.expirationTime) {
       const msUntilRefresh =
         britiveSettings.expirationTime -
         Date.now() -
@@ -1235,8 +1306,6 @@ async function refreshAccessToken() {
         );
       }
     }
-
-    refreshInProgress = true;
 
     const tenant = britiveSettings.tenant;
     const clientId =
@@ -1262,6 +1331,14 @@ async function refreshAccessToken() {
     });
 
     if (!response.ok) {
+      if (isTransientRefreshStatus(response.status)) {
+        await reportError(
+          "refreshAccessToken",
+          new Error(`Token endpoint returned ${response.status}`),
+        );
+        chrome.alarms.create("britive-token-refresh", { delayInMinutes: 1 });
+        return false;
+      }
       await britiveAPI.clearToken();
       chrome.notifications.create("britive-session-expired", {
         type: "basic",
@@ -1324,8 +1401,6 @@ async function refreshAccessToken() {
     // Retry in 60 seconds via alarm rather than giving up
     chrome.alarms.create("britive-token-refresh", { delayInMinutes: 1 });
     return false;
-  } finally {
-    refreshInProgress = false;
   }
 }
 
@@ -2276,6 +2351,7 @@ async function checkoutAccess(
           {
             method: "POST",
             credentials: "include",
+            preserveSessionOnUnauthorized: true,
             body: JSON.stringify({ otp }),
           },
         );

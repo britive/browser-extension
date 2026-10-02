@@ -205,6 +205,7 @@ class BritiveAPI {
   async makeRequest(endpoint, options = {}) {
     const {
       preserveSessionOnUnauthorized = false,
+      isRetryAfterRefresh = false,
       ...requestOptions
     } = options;
     if (!this.baseUrl || !this.bearerToken) {
@@ -219,15 +220,21 @@ class BritiveAPI {
       throw new Error("Not authenticated. Please log in to Britive.");
     }
 
+    await this.refreshIfExpiring();
+    if (!this.bearerToken) {
+      throw new Error("Not authenticated. Please log in to Britive again.");
+    }
+
     const url = `${this.baseUrl}${endpoint}`;
     const extVersion = browser.runtime.getManifest().version;
+    const tokenUsed = this.bearerToken;
 
     // Use Bearer token in Authorization header (like Python SDK)
     const response = await fetch(url, {
       ...requestOptions,
       credentials: requestOptions.credentials || "omit",
       headers: {
-        Authorization: `Bearer ${this.bearerToken}`,
+        Authorization: `Bearer ${tokenUsed}`,
         "Content-Type": "application/json",
         "X-Britive-Extension": extVersion,
         ...requestOptions.headers,
@@ -260,7 +267,23 @@ class BritiveAPI {
         if (preserveSessionOnUnauthorized) {
           throw new Error(`API Error: ${response.status} - ${errorText}`);
         }
-        await this.clearToken();
+        // An expired access token is recoverable while the refresh token is
+        // valid, so refresh and retry once before treating this as a logout.
+        if (
+          !isRetryAfterRefresh &&
+          (await this.recoverFromUnauthorized(tokenUsed))
+        ) {
+          return this.makeRequest(endpoint, {
+            ...options,
+            isRetryAfterRefresh: true,
+          });
+        }
+        // A fresh token being rejected, or no refresh token left, means the
+        // session is really gone. A transient refresh failure keeps the
+        // session; refreshAccessToken has already scheduled a retry.
+        if (isRetryAfterRefresh || !(await hasStoredRefreshToken())) {
+          await this.clearToken();
+        }
         throw new Error("Not authenticated. Please log in to Britive again.");
       }
 
@@ -274,6 +297,30 @@ class BritiveAPI {
     }
 
     return response.text();
+  }
+
+  // Timers don't advance while the machine sleeps, so the scheduled refresh
+  // can be missed entirely. Check the wall clock before every request instead.
+  async refreshIfExpiring() {
+    const { britiveSettings } =
+      await browser.storage.local.get("britiveSettings");
+    if (!britiveSettings?.refreshToken || !britiveSettings.expirationTime) {
+      return;
+    }
+    const refreshAt =
+      britiveSettings.expirationTime - TOKEN_REFRESH_LEAD_TIME_MS;
+    if (Date.now() < refreshAt) return;
+    await refreshAccessToken(
+      britiveSettings.authGeneration || null,
+      "pre_request",
+    );
+  }
+
+  async recoverFromUnauthorized(tokenUsed) {
+    // Another request may already have refreshed while this one was in flight.
+    if (this.bearerToken && this.bearerToken !== tokenUsed) return true;
+    await refreshAccessToken(null, "unauthorized", { force: true });
+    return Boolean(this.bearerToken && this.bearerToken !== tokenUsed);
   }
 
   async clearToken() {
@@ -1476,7 +1523,27 @@ async function exchangeCodeForTokens(
 // ---- Token Refresh ----
 
 let tokenRefreshTimerId = null;
-let refreshInProgress = false;
+let refreshPromise = null;
+
+// HTTP statuses from the token endpoint that don't prove the refresh token is
+// bad (gateway errors, throttling); retry these instead of logging out.
+function isTransientRefreshStatus(status) {
+  return status >= 500 || status === 408 || status === 429;
+}
+
+function scheduleRefreshRetry(authGeneration) {
+  if (tokenRefreshTimerId) clearTimeout(tokenRefreshTimerId);
+  tokenRefreshTimerId = setTimeout(() => {
+    tokenRefreshTimerId = null;
+    refreshAccessToken(authGeneration, "retry");
+  }, 60000);
+}
+
+async function hasStoredRefreshToken() {
+  const { britiveSettings } =
+    await browser.storage.local.get("britiveSettings");
+  return Boolean(britiveSettings?.refreshToken);
+}
 
 function getPostLoginRefreshCooldownRemaining(settings) {
   const lastInteractiveLoginAt = settings?.lastInteractiveLoginAt || 0;
@@ -1545,18 +1612,32 @@ async function shouldIgnoreRefreshFailure(
   return false;
 }
 
-async function refreshAccessToken(
+// Single-flight: concurrent callers (pollers, popup, 401 recovery) all firing
+// on wake share one token request instead of racing each other into a logout.
+// `force` skips the not-yet-due check, for when the server already rejected
+// the current access token.
+function refreshAccessToken(
   expectedAuthGeneration = null,
   source = "unknown",
+  { force = false } = {},
 ) {
+  if (!refreshPromise) {
+    refreshPromise = performTokenRefresh(
+      expectedAuthGeneration,
+      source,
+      force,
+    ).finally(() => {
+      refreshPromise = null;
+    });
+  }
+  return refreshPromise;
+}
+
+async function performTokenRefresh(expectedAuthGeneration, source, force) {
   let attemptedTenant = null;
   let attemptedRefreshToken = null;
   let attemptedAuthGeneration = expectedAuthGeneration;
   try {
-    if (refreshInProgress) {
-      return false;
-    }
-
     const { britiveSettings } =
       await browser.storage.local.get("britiveSettings");
     if (
@@ -1576,7 +1657,7 @@ async function refreshAccessToken(
       );
     }
 
-    if (britiveSettings.expirationTime) {
+    if (!force && britiveSettings.expirationTime) {
       const msUntilRefresh =
         britiveSettings.expirationTime -
         Date.now() -
@@ -1592,8 +1673,6 @@ async function refreshAccessToken(
         );
       }
     }
-
-    refreshInProgress = true;
 
     const tenant = britiveSettings.tenant;
     attemptedTenant = tenant;
@@ -1630,6 +1709,15 @@ async function refreshAccessToken(
           attemptedAuthGeneration,
         )
       ) {
+        return false;
+      }
+      if (isTransientRefreshStatus(response.status)) {
+        await reportError(
+          "refreshAccessToken",
+          new Error(`Token endpoint returned ${response.status}`),
+          { tenant, source, authGeneration: attemptedAuthGeneration },
+        );
+        scheduleRefreshRetry(attemptedAuthGeneration);
         return false;
       }
       await britiveAPI.clearToken();
@@ -1733,13 +1821,8 @@ async function refreshAccessToken(
         return false;
       }
     } catch (_) {}
-    tokenRefreshTimerId = setTimeout(
-      () => refreshAccessToken(attemptedAuthGeneration, "retry"),
-      60000,
-    );
+    scheduleRefreshRetry(attemptedAuthGeneration);
     return false;
-  } finally {
-    refreshInProgress = false;
   }
 }
 
