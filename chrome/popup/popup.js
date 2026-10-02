@@ -2507,7 +2507,7 @@ async function loadSecrets(forceRefresh) {
           ? response.secrets
           : [];
         crtLog("SECRETS", "loaded " + currentSecrets.length + " secrets");
-        await loadAutofillCandidates(forceRefresh === true);
+        await loadAutofillCandidates(false);
         await renderVisibleSecretTypeOptions();
         await displaySecrets(currentSecrets);
         updateLastRefreshed();

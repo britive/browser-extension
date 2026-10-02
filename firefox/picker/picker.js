@@ -36,6 +36,7 @@ function buildMissingExtensionNotice(text) {
   link.href =
     "https://addons.mozilla.org/en-US/firefox/addon/multi-account-containers/";
   link.target = "_blank";
+  link.rel = "noopener noreferrer";
   link.textContent = "Install Multi-Account Containers";
   wrapper.appendChild(link);
 

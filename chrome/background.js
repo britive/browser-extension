@@ -103,6 +103,73 @@ function normalizeError(error, fallback = "Unexpected error") {
 const APPROVALS_FALLBACK_INTERVAL_SEC = 60;
 const POST_LOGIN_REFRESH_COOLDOWN_MS = 2 * 60 * 1000;
 const TOKEN_REFRESH_LEAD_TIME_MS = 5 * 60 * 1000;
+const TOKEN_REFRESH_TIMEOUT_MS = 15000;
+let authEpoch = 0;
+let authWrites = Promise.resolve();
+let activeRefresh = null;
+
+function authSessionKey(settings) {
+  if (!hasAuthenticatedTenantSession(settings)) return null;
+  return JSON.stringify([
+    settings.tenant,
+    settings.authGeneration || settings.loginTimestamp || settings.lastInteractiveLoginAt,
+  ]);
+}
+
+async function authSnapshot() {
+  const epoch = authEpoch;
+  const { britiveSettings: settings } = await chrome.storage.local.get("britiveSettings");
+  return { settings, key: authSessionKey(settings), epoch };
+}
+
+async function isCurrentAuth(session) {
+  const current = await authSnapshot();
+  return Boolean(session.key && session.epoch === current.epoch && session.key === current.key);
+}
+
+async function requireCurrentAuth(session) {
+  const current = await authSnapshot();
+  if (!current.key) throw new Error("Not authenticated. Please log in to Britive again.");
+  if (session.epoch !== current.epoch || session.key !== current.key) {
+    throw new Error("Session changed. Please try again.");
+  }
+}
+
+function invalidateAuthSession() {
+  authEpoch++;
+  activeRefresh?.controller.abort();
+}
+
+// Serialize token commits and logout so an in-flight storage write cannot undo logout.
+async function mutateAuth(task) {
+  const previous = authWrites;
+  let release;
+  authWrites = new Promise((resolve) => { release = resolve; });
+  await previous;
+  try { return await task(); } finally { release(); }
+}
+
+async function deferTokenRefresh(session, retryAfter = null) {
+  await mutateAuth(async () => {
+    if (!(await isCurrentAuth(session))) return;
+    const { tokenRefreshRetry } = await chrome.storage.local.get("tokenRefreshRetry");
+    const previous = tokenRefreshRetry?.key === session.key ? tokenRefreshRetry.failures : 0;
+    const failures = Math.min((previous || 0) + 1, 6);
+    const delay = Math.min(300000, 60000 * 2 ** (failures - 1)) * (0.8 + Math.random() * 0.2);
+    const serverDelay = retryAfter == null ? 0 : /^\d+$/.test(retryAfter)
+      ? Number(retryAfter) * 1000 : Math.max(0, Date.parse(retryAfter) - Date.now()) || 0;
+    const retryAt = Date.now() + Math.max(delay, serverDelay);
+    await chrome.storage.local.set({ tokenRefreshRetry: { key: session.key, failures, retryAt } });
+    chrome.alarms.create("britive-token-refresh", { when: retryAt });
+  });
+}
+
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "local" && changes.britiveSettings &&
+      authSessionKey(changes.britiveSettings.oldValue) !== authSessionKey(changes.britiveSettings.newValue)) {
+    invalidateAuthSession();
+  }
+});
 
 function hasAuthenticatedTenantSession(settings) {
   return Boolean(
@@ -160,6 +227,13 @@ class BritiveAPI {
   }
 
   async makeRequest(endpoint, options = {}) {
+    const {
+      preserveSessionOnUnauthorized = false,
+      isRetryAfterRefresh = false,
+      requestSession = null,
+      ...requestOptions
+    } = options;
+    const session = requestSession || await authSnapshot();
     await this.ensureInitialized();
 
     if (!this.baseUrl) {
@@ -170,22 +244,34 @@ class BritiveAPI {
       throw new Error("Not authenticated. Please log in to Britive.");
     }
 
-    const url = `${this.baseUrl}${endpoint}`;
+    await requireCurrentAuth(session);
+    await this.refreshIfExpiring(session);
+    await requireCurrentAuth(session);
+    if (!this.bearerToken) {
+      throw new Error("Not authenticated. Please log in to Britive again.");
+    }
+
+    const current = await authSnapshot();
+    await requireCurrentAuth(session);
+    const url = `${getTenantBaseUrl(session.settings.tenant)}${endpoint}`;
     const extVersion = chrome.runtime.getManifest().version;
+    const tokenUsed = current.settings.bearerToken;
 
     const response = await fetch(url, {
-      ...options,
+      ...requestOptions,
       headers: {
-        Authorization: `Bearer ${this.bearerToken}`,
+        Authorization: `Bearer ${tokenUsed}`,
         "Content-Type": "application/json",
         "X-Britive-Extension": extVersion,
-        ...options.headers,
+        ...requestOptions.headers,
       },
     });
 
+    await requireCurrentAuth(session);
     if (!response.ok) {
       // Read the response body once for error handling
       const errorText = await response.text();
+      await requireCurrentAuth(session);
 
       // For 403 responses, only clear the token for PE-0028 step-up (which is
       // actually NOT a session expiry - it just needs OTP). Generic 403 means
@@ -206,30 +292,81 @@ class BritiveAPI {
       }
 
       if (response.status === 401) {
-        await this.clearToken();
+        if (preserveSessionOnUnauthorized) {
+          throw new Error(`API Error: ${response.status} - ${errorText}`);
+        }
+        // An expired access token is recoverable while the refresh token is
+        // valid, so refresh and retry once before treating this as a logout.
+        if (
+          !isRetryAfterRefresh &&
+          (await this.recoverFromUnauthorized(tokenUsed, session))
+        ) {
+          return this.makeRequest(endpoint, {
+            ...options,
+            isRetryAfterRefresh: true,
+            requestSession: session,
+          });
+        }
+        // A fresh token being rejected, or no refresh token left, means the
+        // session is really gone. A transient refresh failure keeps the
+        // session; refreshAccessToken has already scheduled a retry.
+        if (isRetryAfterRefresh || !(await hasStoredRefreshToken())) {
+          await this.clearToken(session, tokenUsed);
+        }
         throw new Error("Not authenticated. Please log in to Britive again.");
       }
 
-      throw new Error(`API Error: ${response.status} - ${errorText}`);
+      const error = new Error(`API Error: ${response.status} - ${errorText}`);
+      error.retryAfter = response.headers.get("Retry-After");
+      throw error;
     }
 
     const contentType = response.headers.get("content-type");
-    if (contentType && contentType.includes("application/json")) {
-      return response.json();
-    }
-
-    return response.text();
+    const result = contentType && contentType.includes("application/json")
+      ? await response.json() : await response.text();
+    await requireCurrentAuth(session);
+    return result;
   }
 
-  async clearToken() {
-    // Don't clear if token was just set (< 15s ago) - prevents post-login 403 race
-    const settings = await chrome.storage.local.get(["britiveSettings"]);
-    if (
-      settings.britiveSettings?.loginTimestamp &&
-      Date.now() - settings.britiveSettings.loginTimestamp < 15000
-    ) {
+  // The refresh alarm can fire late (sleep, suspended service worker), so
+  // check the wall clock before every request instead of relying on it.
+  async refreshIfExpiring(session) {
+    const britiveSettings = session.settings;
+    if (!britiveSettings?.refreshToken || !britiveSettings.expirationTime) {
       return;
     }
+    const refreshAt =
+      britiveSettings.expirationTime - TOKEN_REFRESH_LEAD_TIME_MS;
+    if (Date.now() < refreshAt) return;
+    const refreshed = await refreshAccessToken();
+    await requireCurrentAuth(session);
+    if (!refreshed && Date.now() >= britiveSettings.expirationTime) {
+      throw new Error("Session refresh is temporarily unavailable. Please try again later.");
+    }
+  }
+
+  async recoverFromUnauthorized(tokenUsed, session) {
+    await requireCurrentAuth(session);
+    // Another request may already have refreshed while this one was in flight.
+    if (this.bearerToken && this.bearerToken !== tokenUsed) return true;
+    const refreshed = await refreshAccessToken({ force: true });
+    await requireCurrentAuth(session);
+    if (!refreshed && await hasStoredRefreshToken()) {
+      throw new Error("Session refresh is temporarily unavailable. Please try again later.");
+    }
+    return Boolean(this.bearerToken && this.bearerToken !== tokenUsed);
+  }
+
+  async clearToken(expectedSession = null, tokenUsed = null) {
+    if (!expectedSession) invalidateAuthSession();
+    return mutateAuth(() => this.clearCurrentToken(expectedSession, tokenUsed));
+  }
+
+  async clearCurrentToken(expectedSession, tokenUsed) {
+    if (expectedSession && !(await isCurrentAuth(expectedSession))) return;
+    const settings = await chrome.storage.local.get(["britiveSettings"]);
+    if (tokenUsed && settings.britiveSettings?.bearerToken !== tokenUsed) return;
+    if (expectedSession) invalidateAuthSession();
     this.bearerToken = null;
     this.vaultId = null;
     // Cancel any pending token refresh alarm
@@ -245,6 +382,7 @@ class BritiveAPI {
       });
     }
     await clearSecretsCache();
+    await chrome.storage.local.remove("tokenRefreshRetry");
     await chrome.storage.local.remove([
       "secretTemplates",
       "secretUrlMap",
@@ -315,21 +453,32 @@ chrome.declarativeNetRequest.updateDynamicRules({
 // ── Secrets cache ──
 
 const CACHE_MAX_AGE_MS = 60 * 60 * 1000; // 1 hour
-const SECRETS_CACHE_VERSION = 2;
+const SECRETS_CACHE_VERSION = 3;
+let secretsLoad = null;
+let secretsGeneration = 0;
 
-async function getCachedSecrets() {
+async function getSecretsScope() {
+  const { britiveSettings: settings } =
+    await chrome.storage.local.get("britiveSettings");
+  if (!hasAuthenticatedTenantSession(settings)) return null;
+  return authSessionKey(settings);
+}
+
+async function getCachedSecrets(scope) {
   const { secretsCache } = await chrome.storage.local.get("secretsCache");
   if (!secretsCache) return null;
   if (secretsCache.version !== SECRETS_CACHE_VERSION) return null;
+  if (secretsCache.scope !== scope) return null;
   const age = Date.now() - (secretsCache.timestamp || 0);
   if (age > CACHE_MAX_AGE_MS) return null;
   return secretsCache.secrets;
 }
 
-async function setCachedSecrets(secrets) {
+async function setCachedSecrets(secrets, scope) {
   await chrome.storage.local.set({
     secretsCache: {
       version: SECRETS_CACHE_VERSION,
+      scope,
       secrets,
       timestamp: Date.now(),
     },
@@ -337,7 +486,60 @@ async function setCachedSecrets(secrets) {
 }
 
 async function clearSecretsCache() {
-  await chrome.storage.local.remove("secretsCache");
+  secretsGeneration++;
+  await chrome.storage.local.remove(["secretsCache", "secretsRetry"]);
+}
+
+// All list consumers share a refresh, including its pagination and failure cooldown.
+// Persist the cooldown so Chrome service-worker restarts do not reset it.
+async function getSecrets(forceRefresh = false) {
+  const generation = secretsGeneration;
+  const scope = await getSecretsScope();
+  if (!scope) return { error: "Not authenticated. Please log in to Britive." };
+  const isCurrent = async () =>
+    generation === secretsGeneration && scope === (await getSecretsScope());
+  const cached = !forceRefresh ? await getCachedSecrets(scope) : null;
+  if (cached && (await isCurrent())) return cached;
+  if (secretsLoad) return secretsLoad;
+  const load = (async () => {
+    const { secretsRetry } = await chrome.storage.local.get("secretsRetry");
+    const retry = secretsRetry?.scope === scope ? secretsRetry : null;
+    if (retry?.retryAt > Date.now()) {
+      return {
+        error: "Secrets refresh is temporarily paused. Please try again later.",
+        retryAt: retry.retryAt,
+      };
+    }
+    if (!(await isCurrent())) return { error: "Session changed. Please try again." };
+    const secrets = await fetchBritiveSecrets(isCurrent);
+    if (!(await isCurrent())) return { error: "Session changed. Please try again." };
+    if (!secrets.error) {
+      await setCachedSecrets(secrets, scope);
+      await chrome.storage.local.remove("secretsRetry");
+    } else {
+      const failures = Math.min((retry?.failures || 0) + 1, 6);
+      const delay = Math.min(300000, 30000 * 2 ** (failures - 1));
+      const retryAfter = secrets.retryAfter;
+      const serverDelay = retryAfter == null
+        ? 0
+        : /^\d+$/.test(retryAfter)
+          ? Number(retryAfter) * 1000
+          : Math.max(0, Date.parse(retryAfter) - Date.now()) || 0;
+      const retryAt = Date.now() +
+        Math.max(serverDelay, delay * (0.8 + Math.random() * 0.2));
+      await chrome.storage.local.set({ secretsRetry: { scope, failures, retryAt } });
+      secrets.retryAt = retryAt;
+    }
+    return (await isCurrent())
+      ? secrets
+      : { error: "Session changed. Please try again." };
+  })();
+  secretsLoad = load;
+  try {
+    return await load;
+  } finally {
+    if (secretsLoad === load) secretsLoad = null;
+  }
 }
 
 // ── Secret templates ──
@@ -582,20 +784,7 @@ async function handleMessage(message, sender) {
   }
 
   if (message.action === "getSecrets") {
-    const forceRefresh = message.forceRefresh === true;
-
-    if (!forceRefresh) {
-      const cached = await getCachedSecrets();
-      if (cached) {
-        return { secrets: cached };
-      }
-    }
-
-    const secrets = await fetchBritiveSecrets();
-    if (!secrets.error) {
-      await setCachedSecrets(secrets);
-    }
-    return { secrets };
+    return { secrets: await getSecrets(message.forceRefresh === true) };
   }
 
   if (message.action === "refreshBanner") {
@@ -941,6 +1130,7 @@ async function startOAuthLogin(tenant) {
       };
     }
 
+    invalidateAuthSession();
     // Generate PKCE parameters
     const codeVerifier = generateCodeVerifier();
     const codeChallenge = await generateCodeChallenge(codeVerifier);
@@ -1130,22 +1320,25 @@ async function exchangeCodeForTokens(
       expirationTime = Date.now() + 60 * 60 * 1000;
     }
 
-    // Store tokens
-    await chrome.storage.local.set({
-      britiveSettings: {
-        tenant,
-        bearerToken: accessToken,
-        refreshToken: refreshToken || null,
-        clientId,
-        expirationTime,
-        authenticated: true,
-        loginTimestamp: Date.now(),
-      },
-    });
+    // Store tokens in the same queue as refresh commits and logout.
+    await mutateAuth(async () => {
+      await chrome.storage.local.set({
+        britiveSettings: {
+          tenant,
+          bearerToken: accessToken,
+          refreshToken: refreshToken || null,
+          clientId,
+          expirationTime,
+          authenticated: true,
+          loginTimestamp: Date.now(),
+          authGeneration: crypto.randomUUID(),
+        },
+      });
 
-    // Update API client
-    britiveAPI.baseUrl = getTenantBaseUrl(tenant);
-    britiveAPI.bearerToken = accessToken;
+      // Update API client
+      britiveAPI.baseUrl = getTenantBaseUrl(tenant);
+      britiveAPI.bearerToken = accessToken;
+    });
 
     // Schedule token refresh (alarm-based for MV3 service worker survival)
     if (refreshToken) {
@@ -1172,7 +1365,17 @@ async function exchangeCodeForTokens(
 
 // ---- Token Refresh (alarm-based for MV3 service worker) ----
 
-let refreshInProgress = false;
+// HTTP statuses from the token endpoint that don't prove the refresh token is
+// bad (gateway errors, throttling); retry these instead of logging out.
+function isTransientRefreshStatus(status) {
+  return status >= 500 || status === 408 || status === 429;
+}
+
+async function hasStoredRefreshToken() {
+  const { britiveSettings } =
+    await chrome.storage.local.get("britiveSettings");
+  return Boolean(britiveSettings?.refreshToken);
+}
 
 function getPostLoginRefreshCooldownRemaining(settings) {
   const loginTimestamp = settings?.loginTimestamp || 0;
@@ -1199,14 +1402,41 @@ function scheduleTokenRefreshAlarm(expirationTime) {
   chrome.alarms.create("britive-token-refresh", { delayInMinutes: delayMin });
 }
 
-async function refreshAccessToken() {
+// Single-flight: concurrent callers (pollers, popup, 401 recovery) share one
+// token request instead of racing each other into a logout. `force` skips the
+// not-yet-due check, for when the server already rejected the access token.
+async function refreshAccessToken({ force = false } = {}) {
+  const session = await authSnapshot();
+  if (!session.key) return false;
+  if (activeRefresh?.key === session.key && activeRefresh.epoch === session.epoch) {
+    const flight = activeRefresh;
+    const refreshed = await flight.promise;
+    if (force && refreshed && !flight.sent && await isCurrentAuth(session)) {
+      return refreshAccessToken({ force: true });
+    }
+    return refreshed;
+  }
+  activeRefresh?.controller.abort();
+  const controller = new AbortController();
+  const flight = { key: session.key, epoch: session.epoch, controller, sent: false };
+  const timer = setTimeout(() => controller.abort(), TOKEN_REFRESH_TIMEOUT_MS);
+  activeRefresh = flight;
+  flight.promise = performTokenRefresh(force, session, controller, flight).finally(() => {
+    clearTimeout(timer);
+    if (activeRefresh === flight) activeRefresh = null;
+  });
+  return flight.promise;
+}
+
+async function performTokenRefresh(force, session, controller, flight) {
   try {
-    if (refreshInProgress) {
+    const britiveSettings = session.settings;
+    if (!(await isCurrentAuth(session))) return false;
+    const { tokenRefreshRetry } = await chrome.storage.local.get("tokenRefreshRetry");
+    if (tokenRefreshRetry?.key === session.key && tokenRefreshRetry.retryAt > Date.now()) {
+      chrome.alarms.create("britive-token-refresh", { when: tokenRefreshRetry.retryAt });
       return false;
     }
-
-    const { britiveSettings } =
-      await chrome.storage.local.get("britiveSettings");
     if (
       !britiveSettings ||
       !britiveSettings.refreshToken ||
@@ -1217,13 +1447,13 @@ async function refreshAccessToken() {
 
     const cooldownRemaining =
       getPostLoginRefreshCooldownRemaining(britiveSettings);
-    if (cooldownRemaining > 0) {
+    if (!force && cooldownRemaining > 0 && Date.now() < britiveSettings.expirationTime) {
       return Boolean(
         britiveSettings.bearerToken && isValidTenant(britiveSettings.tenant),
       );
     }
 
-    if (britiveSettings.expirationTime) {
+    if (!force && britiveSettings.expirationTime) {
       const msUntilRefresh =
         britiveSettings.expirationTime -
         Date.now() -
@@ -1235,8 +1465,6 @@ async function refreshAccessToken() {
         );
       }
     }
-
-    refreshInProgress = true;
 
     const tenant = britiveSettings.tenant;
     const clientId =
@@ -1251,9 +1479,11 @@ async function refreshAccessToken() {
       client_id: clientId,
     });
 
+    flight.sent = true;
     const response = await fetch(tokenUrl, {
       method: "POST",
       credentials: "omit",
+      signal: controller.signal,
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
         "X-Britive-Extension": extVersion,
@@ -1261,8 +1491,17 @@ async function refreshAccessToken() {
       body: body.toString(),
     });
 
+    if (!(await isCurrentAuth(session))) return false;
     if (!response.ok) {
-      await britiveAPI.clearToken();
+      if (isTransientRefreshStatus(response.status)) {
+        await reportError(
+          "refreshAccessToken",
+          new Error(`Token endpoint returned ${response.status}`),
+        );
+        await deferTokenRefresh(session, response.headers.get("Retry-After"));
+        return false;
+      }
+      await britiveAPI.clearToken(session, britiveSettings.bearerToken);
       chrome.notifications.create("britive-session-expired", {
         type: "basic",
         iconUrl: chrome.runtime.getURL("icons/britive-icon-96.png"),
@@ -1278,7 +1517,7 @@ async function refreshAccessToken() {
       data.refresh_token || data.refreshToken || britiveSettings.refreshToken;
 
     if (!newAccessToken) {
-      await britiveAPI.clearToken();
+      await britiveAPI.clearToken(session, britiveSettings.bearerToken);
       return false;
     }
 
@@ -1290,42 +1529,44 @@ async function refreshAccessToken() {
       expirationTime = Date.now() + 60 * 60 * 1000;
     }
 
-    await chrome.storage.local.set({
-      britiveSettings: {
-        ...britiveSettings,
-        bearerToken: newAccessToken,
-        refreshToken: newRefreshToken,
-        expirationTime,
-        clientId,
-      },
-    });
-
-    britiveAPI.bearerToken = newAccessToken;
-
-    // Refresh the WS auth cookie if socket is connected
-    try {
-      const wsCookieUrl = getWsCookieUrlForTenant(tenant);
-      await chrome.cookies.set({
-        url: wsCookieUrl,
-        name: "auth",
-        value: newAccessToken,
-        path: WS_COOKIE_PATH,
-        secure: true,
-        httpOnly: true,
-        sameSite: "no_restriction",
+    return await mutateAuth(async () => {
+      if (!(await isCurrentAuth(session))) return false;
+      await chrome.storage.local.set({
+        britiveSettings: {
+          ...britiveSettings,
+          bearerToken: newAccessToken,
+          refreshToken: newRefreshToken,
+          expirationTime,
+          clientId,
+        },
       });
-    } catch (_) {}
+      if (!(await isCurrentAuth(session))) return false;
+      await chrome.storage.local.remove("tokenRefreshRetry");
 
-    // Schedule the next refresh
-    scheduleTokenRefreshAlarm(expirationTime);
-    return true;
+      britiveAPI.bearerToken = newAccessToken;
+
+      // Refresh the WS auth cookie if socket is connected
+      try {
+        const wsCookieUrl = getWsCookieUrlForTenant(tenant);
+        await chrome.cookies.set({
+          url: wsCookieUrl,
+          name: "auth",
+          value: newAccessToken,
+          path: WS_COOKIE_PATH,
+          secure: true,
+          httpOnly: true,
+          sameSite: "no_restriction",
+        });
+      } catch (_) {}
+
+      // Schedule the next refresh
+      scheduleTokenRefreshAlarm(expirationTime);
+      return true;
+    });
   } catch (error) {
     await reportError("refreshAccessToken", error);
-    // Retry in 60 seconds via alarm rather than giving up
-    chrome.alarms.create("britive-token-refresh", { delayInMinutes: 1 });
+    await deferTokenRefresh(session);
     return false;
-  } finally {
-    refreshInProgress = false;
   }
 }
 
@@ -1408,7 +1649,7 @@ async function checkAuthenticationStatus() {
 
 // ── Fetch Britive secrets list (metadata only) ──
 
-async function fetchBritiveSecrets() {
+async function fetchBritiveSecrets(isCurrent) {
   try {
     const settings = await chrome.storage.local.get(["britiveSettings"]);
     if (!settings.britiveSettings || !settings.britiveSettings.tenant) {
@@ -1423,6 +1664,7 @@ async function fetchBritiveSecrets() {
     let pageToken = "";
 
     do {
+      if (!(await isCurrent())) throw new Error("Session changed. Please try again.");
       const params = new URLSearchParams({
         path: "/",
         recursiveSecrets: "true",
@@ -1457,7 +1699,7 @@ async function fetchBritiveSecrets() {
 
     return allSecrets;
   } catch (error) {
-    return { error: normalizeError(error) };
+    return { error: normalizeError(error), retryAfter: error.retryAfter };
   }
 }
 
@@ -1742,25 +1984,14 @@ async function getPasswordManagerCandidates(forceRefresh) {
   return await getPasswordManagerCandidatesForUrl(tab.url, forceRefresh);
 }
 
-function secretsNeedMetadataRefresh(secrets) {
-  return (secrets || []).some(
-    (secret) =>
-      secret.secretType === "Password Manager" &&
-      !getSecretMetadataValue(secret, "URL"),
-  );
-}
-
 async function getPasswordManagerCandidatesForUrl(activeUrl, forceRefresh) {
   if (!activeUrl) return { candidates: [], tabUrl: "" };
-
-  let secrets = !forceRefresh ? await getCachedSecrets() : null;
-  if (Array.isArray(secrets) && secretsNeedMetadataRefresh(secrets)) {
-    secrets = null;
+  const { extensionSettings } =
+    await chrome.storage.local.get("extensionSettings");
+  if ((extensionSettings?.passwordManagerAutofill ?? true) === false) {
+    return { candidates: [], tabUrl: activeUrl };
   }
-  if (!secrets) {
-    secrets = await fetchBritiveSecrets();
-    if (!secrets.error) await setCachedSecrets(secrets);
-  }
+  const secrets = await getSecrets(forceRefresh);
   if (!Array.isArray(secrets)) return { candidates: [], tabUrl: activeUrl };
 
   const candidates = secrets
@@ -2276,6 +2507,7 @@ async function checkoutAccess(
           {
             method: "POST",
             credentials: "include",
+            preserveSessionOnUnauthorized: true,
             body: JSON.stringify({ otp }),
           },
         );

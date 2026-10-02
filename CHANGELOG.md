@@ -1,5 +1,35 @@
 # Change Log
 
+## v1.2.2 [2026-10-02]
+
+__What's New:__
+
+* None
+
+__Enhancements:__
+
+* None
+
+__Bug Fixes:__
+
+* Sessions now refresh expired access tokens after computer sleep, and concurrent requests share one token refresh.
+* API requests rejected with an expired access token now refresh and retry once within the same login session. Rejected step-up OTPs are not retried and no longer log Chrome users out.
+* Late API and token refresh responses no longer replay operations under a different login, overwrite a newer session, or restore a logged-out session.
+* Failed token refreshes now apply a persisted cooldown with exponential backoff and honor Retry-After. Stalled refreshes time out after 15 seconds without discarding a valid refresh token.
+* Concurrent secrets list requests now share one paginated refresh. Manual refresh reuses the refreshed metadata for autofill instead of downloading the list twice.
+* Password Manager secrets without URL metadata no longer trigger repeated list downloads, and failed secrets refreshes now apply a persisted cooldown.
+* Secrets metadata caches are scoped to the tenant and login session. Inline autofill lookups now honor the autofill setting before requesting metadata.
+* The Firefox container picker's installation link now explicitly sets noopener and noreferrer.
+
+__Dependencies:__
+
+* jsdom is added as a development-only dependency for browser UI tests. It is not included in the extension packages.
+
+__Other:__
+
+* Automated tests now cover both browser builds, including session recovery, secrets refreshes, popup and options pages, autofill, and browser-specific scripts.
+* GitHub Actions now runs the test suite and JavaScript syntax checks.
+
 ## v1.2.1 [2026-08-18]
 
 __What's New:__

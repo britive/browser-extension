@@ -36,3 +36,6 @@ desktop.ini
 
 # Local
 local
+
+# Dependencies
+node_modules/
