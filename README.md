@@ -111,7 +111,27 @@ chrome/
   popup/          # popup UI
   options/        # standalone settings page
   icons/
+
+test/
+  harness.mjs     # loads a build's background.js against a fake browser API,
+                  # fake Britive tenant, and virtual clock
+  *.test.mjs      # tests; each one runs against both builds
 ```
+
+## Running Tests
+
+Requires Node.js 20 or newer. There are no dependencies to install.
+
+```bash
+npm test
+```
+
+The tests load each build's `background.js` into an isolated VM context with
+a fake WebExtension API, a fake Britive tenant behind `fetch()`, and a
+virtual clock. The clock can model a laptop sleep (`env.sleep(ms)`): wall-clock
+time jumps forward while pending timers are delayed by the same amount, which
+is how the browser behaves across sleep. `test/` and `package.json` are not
+included in the packaged extension.
 
 ## Firefox vs Chrome
 
